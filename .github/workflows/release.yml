@@ -80,6 +80,20 @@ jobs:
           printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
           echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
 
+      # tauri-action splits `tauriScript` on spaces and execs the first word directly: it does not run a
+      # shell, and it inserts `build` itself. `npm run tauri` can't be expressed that way, and starting the
+      # CLI from app/ would miss the env vars the `tauri` script in ui/package.json normally sets, so the
+      # wrapper below is what the action actually runs.
+      - name: Write the Tauri CLI wrapper
+        run: |
+          {
+            echo '#!/bin/sh'
+            echo 'root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)'
+            echo 'export TAURI_APP_PATH="$root/app" TAURI_FRONTEND_PATH="$root/ui"'
+            echo 'exec node "$root/ui/node_modules/@tauri-apps/cli/tauri.js" "$@"'
+          } > "$RUNNER_TEMP/tauri-release"
+          chmod +x "$RUNNER_TEMP/tauri-release"
+
       - name: Build, sign, notarize, publish
         uses: tauri-apps/tauri-action@v0
         env:
@@ -92,7 +106,7 @@ jobs:
           APPLE_API_ISSUER: ${{ env.APPLE_API_KEY_PATH && secrets.APPLE_API_ISSUER || '' }}
         with:
           projectPath: app
-          tauriScript: npm --prefix ../ui run tauri --
+          tauriScript: ${{ runner.temp }}/tauri-release
           args: --target universal-apple-darwin --config tauri.release.conf.json
           tagName: ${{ github.ref_name }}
           releaseName: anyTools ${{ github.ref_name }}
