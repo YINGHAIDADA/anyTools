@@ -1,0 +1,275 @@
+@property --angle {
+  syntax: '<angle>';
+  inherits: true;
+  initial-value: 0deg;
+}
+
+:root {
+  --accent-a: #8b6cff;
+  --accent-b: #22d3ee;
+  --accent-c: #f472b6;
+
+  --sector: rgba(22, 22, 32, 0.34);
+  --sector-hover: color-mix(in srgb, var(--accent-a) 22%, transparent);
+  --sector-flash: color-mix(in srgb, var(--accent-a) 55%, white 10%);
+  --sector-stroke: rgba(255, 255, 255, 0.1);
+  --disc: rgba(18, 18, 26, 0.42);
+  --disc-stroke: rgba(255, 255, 255, 0.12);
+  --hl-top: rgba(255, 255, 255, 0.32);
+  --hl-mid: rgba(255, 255, 255, 0.06);
+  --hl-bottom: rgba(255, 255, 255, 0.14);
+  --fg: #fff;
+  --fg-icon: rgba(255, 255, 255, 0.82);
+  --fg-label: rgba(255, 255, 255, 0.55);
+  --fg-label-hover: rgba(255, 255, 255, 0.96);
+  --fg-hint: rgba(255, 255, 255, 0.5);
+  --text-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+  --noise: 0.05;
+  color-scheme: dark;
+}
+
+:root.light {
+  --sector: rgba(255, 255, 255, 0.34);
+  --sector-hover: color-mix(in srgb, var(--accent-a) 18%, rgba(255, 255, 255, 0.4));
+  --sector-flash: color-mix(in srgb, var(--accent-a) 40%, white);
+  --sector-stroke: rgba(0, 0, 0, 0.08);
+  --disc: rgba(255, 255, 255, 0.5);
+  --disc-stroke: rgba(0, 0, 0, 0.08);
+  --hl-top: rgba(255, 255, 255, 0.9);
+  --hl-mid: rgba(255, 255, 255, 0.2);
+  --hl-bottom: rgba(0, 0, 0, 0.06);
+  --fg: #111;
+  --fg-icon: rgba(0, 0, 0, 0.72);
+  --fg-label: rgba(0, 0, 0, 0.5);
+  --fg-label-hover: rgba(0, 0, 0, 0.9);
+  --fg-hint: rgba(0, 0, 0, 0.45);
+  --text-shadow: none;
+  --noise: 0.035;
+  color-scheme: light;
+}
+
+html,
+body {
+  margin: 0;
+  width: 420px;
+  height: 420px;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Armed between sessions: fully rendered, slightly scaled down. The native window is invisible; on
+   trigger it fades in natively and .open springs the content to scale 1. */
+#stage {
+  position: relative;
+  width: 420px;
+  height: 420px;
+  transform: scale(0.94);
+  transform-origin: 50% 50%;
+}
+
+#stage.open {
+  transform: scale(1);
+  transition: transform 220ms linear(0, 0.38 9%, 0.72 19%, 0.94 30%, 1.04 41%, 1.06 50%, 1.03 64%, 1.005 80%, 1);
+}
+
+#stage.no-anim,
+#stage.no-anim * {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* Submenu in / out */
+#stage.swap-out #wheel,
+#stage.swap-out #center {
+  opacity: 0;
+  transform: scale(0.9);
+  transition: opacity 70ms ease-in, transform 70ms ease-in;
+}
+#stage.swap-out-back #wheel,
+#stage.swap-out-back #center {
+  opacity: 0;
+  transform: scale(1.08);
+  transition: opacity 70ms ease-in, transform 70ms ease-in;
+}
+#stage.swap-in #wheel,
+#stage.swap-in #center {
+  animation: swap-in 170ms cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+#stage.swap-in-back #wheel,
+#stage.swap-in-back #center {
+  animation: swap-in-back 170ms cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+@keyframes swap-in {
+  from { opacity: 0; transform: scale(1.12); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes swap-in-back {
+  from { opacity: 0; transform: scale(0.88); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+#wheel {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  transform-origin: 50% 50%;
+}
+
+.hl-top { stop-color: var(--hl-top); }
+.hl-mid { stop-color: var(--hl-mid); }
+.hl-bottom { stop-color: var(--hl-bottom); }
+
+.sector {
+  fill: var(--sector);
+  stroke: var(--sector-stroke);
+  stroke-width: 1;
+  transition: fill 110ms ease-out, transform 140ms cubic-bezier(0.2, 0.9, 0.3, 1.2), opacity 120ms;
+}
+.sector.hover { fill: var(--sector-hover); }
+.sector.flash { fill: var(--sector-flash); transition: fill 40ms; }
+.sector.disabled { opacity: 0.55; }
+.sector.disabled.hover { fill: var(--sector); }
+
+.sector-hl {
+  fill: none;
+  stroke: url(#hl);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.noise {
+  pointer-events: none;
+  opacity: var(--noise);
+  mix-blend-mode: overlay;
+}
+
+.center-disc {
+  fill: var(--disc);
+  stroke: var(--disc-stroke);
+  stroke-width: 1;
+}
+.center-hl {
+  fill: none;
+  stroke: url(#hl);
+  stroke-width: 1;
+}
+
+.item-icon {
+  color: var(--fg-icon);
+  transition: color 110ms, transform 140ms cubic-bezier(0.2, 0.9, 0.3, 1.2), opacity 120ms;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.item-icon.hover { color: var(--fg); transform: scale(1.14); }
+.item-icon.disabled { opacity: 0.32; }
+.item-icon.disabled.hover { transform: none; }
+.item-icon .app-icon image { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25)); }
+
+.item-label {
+  fill: var(--fg-label);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  text-anchor: middle;
+  transition: fill 110ms, opacity 120ms;
+}
+.item-label.hover { fill: var(--fg-label-hover); }
+.item-label.disabled { opacity: 0.45; }
+
+.submenu-mark {
+  fill: none;
+  stroke: var(--fg-label);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ---------------- center ---------------- */
+
+#center {
+  position: absolute;
+  left: 160px;
+  top: 160px;
+  width: 100px;
+  height: 100px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--fg);
+  pointer-events: none;
+  text-align: center;
+  transform-origin: 50% 50%;
+}
+#center-icon { height: 24px; }
+#center-icon svg { width: 24px; height: 24px; }
+#center-label {
+  font-size: 12px;
+  font-weight: 600;
+  max-width: 92px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: var(--text-shadow);
+}
+#center-label.dim { opacity: 0.55; }
+#center-hint {
+  font-size: 9.5px;
+  color: var(--fg-hint);
+  max-width: 94px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------------- flowing edge glow ---------------- */
+
+.glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.glow.on { opacity: 1; }
+
+/* A rotating conic gradient, masked to the hovered sector's outline. */
+.glow-ring {
+  position: absolute;
+  inset: 0;
+  background: conic-gradient(
+    from var(--angle) at 50% 50%,
+    var(--accent-a),
+    var(--accent-b) 25%,
+    transparent 38%,
+    transparent 55%,
+    var(--accent-c) 70%,
+    var(--accent-a)
+  );
+  -webkit-mask-image: var(--mask);
+  mask-image: var(--mask);
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  animation: spin 2.4s linear infinite;
+  /* Don't keep the compositor busy while the glow (or the whole window) is invisible. */
+  animation-play-state: paused;
+}
+.glow.on .glow-ring { animation-play-state: running; }
+.glow-bloom { filter: blur(9px); opacity: 0.85; }
+:root.light .glow-bloom { opacity: 0.6; }
+
+@keyframes spin {
+  from { --angle: var(--angle-base, 0deg); }
+  to { --angle: calc(var(--angle-base, 0deg) + 360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glow-ring { animation: none; }
+  #stage, #stage.open { transform: none; transition: none; }
+  #stage.swap-in #wheel, #stage.swap-in-back #wheel { animation: none; }
+}

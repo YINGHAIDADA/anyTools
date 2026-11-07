@@ -1,0 +1,20 @@
+[package]
+name = "anytools-platform"
+description = "Platform implementations of the anyTools core traits (macOS, mock)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anytools-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+block2 = "0.6"
+trash = "5"

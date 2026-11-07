@@ -1,0 +1,365 @@
+//! Launching, scripts, dialogs, clipboard, trash, zip, permissions, icons.
+
+use super::context::{automation_permission, FINDER};
+use super::ffi::*;
+use anytools_core::platform::*;
+use objc2::rc::{autoreleasepool, Retained};
+use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::{msg_send, AllocAnyThread, ClassType};
+use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSPasteboard, NSPasteboardTypeString, NSWorkspace};
+use objc2_foundation::{NSArray, NSDictionary, NSPoint, NSRect, NSSize, NSString, NSURL};
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+fn run(cmd: &mut Command) -> Result<(), String> {
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// `com.apple.Terminal` → bundle id; `/Applications/X.app` → path; anything else → app name.
+fn open_app_args(target: &str) -> Vec<String> {
+    if target.starts_with('/') || target.starts_with('~') {
+        vec![expand_tilde(target)]
+    } else if is_bundle_id(target) {
+        vec!["-b".into(), target.into()]
+    } else {
+        vec!["-a".into(), target.into()]
+    }
+}
+
+/// Like [`open_app_args`] but always as an app selector, for `open <selector> <files…>`.
+fn app_flag_args(app: &str) -> Vec<String> {
+    let mut args = open_app_args(app);
+    if args.len() == 1 {
+        // A path to an .app: `open -a /Applications/iTerm.app dir`
+        args.insert(0, "-a".into());
+    }
+    args
+}
+
+fn is_bundle_id(s: &str) -> bool {
+    s.contains('.') && !s.contains(' ') && !s.contains('/') && !s.ends_with(".app")
+}
+
+fn expand_tilde(p: &str) -> String {
+    match (p.strip_prefix('~'), std::env::var("HOME")) {
+        (Some(rest), Ok(home)) => format!("{home}{rest}"),
+        _ => p.into(),
+    }
+}
+
+fn applescript_string(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+pub struct MacShell;
+
+impl Shell for MacShell {
+    fn launch(&self, target: &str) -> Result<(), String> {
+        run(Command::new("/usr/bin/open").args(open_app_args(target)))
+    }
+
+    fn open(&self, target: &str) -> Result<(), String> {
+        run(Command::new("/usr/bin/open").arg(expand_tilde(target)))
+    }
+
+    fn open_with(&self, app: &str, paths: &[PathBuf]) -> Result<(), String> {
+        run(Command::new("/usr/bin/open").args(app_flag_args(app)).args(paths))
+    }
+
+    fn open_terminal(&self, dir: &Path, terminal: Option<&str>) -> Result<(), String> {
+        run(Command::new("/usr/bin/open").args(app_flag_args(terminal.unwrap_or("com.apple.Terminal"))).arg(dir))
+    }
+
+    fn run_script(&self, r: &ScriptRun) -> Result<ScriptOutput, String> {
+        let mut cmd = match (r.lang, r.is_file) {
+            (ScriptLang::Shell, false) => {
+                let mut c = Command::new("/bin/zsh");
+                c.args(["-c", r.source]);
+                c
+            }
+            (ScriptLang::Shell, true) => {
+                let mut c = Command::new("/bin/zsh");
+                c.arg(expand_tilde(r.source));
+                c
+            }
+            (ScriptLang::AppleScript, false) => {
+                let mut c = Command::new("/usr/bin/osascript");
+                c.args(["-e", r.source]);
+                c
+            }
+            (ScriptLang::AppleScript, true) => {
+                let mut c = Command::new("/usr/bin/osascript");
+                c.arg(expand_tilde(r.source));
+                c
+            }
+            (ScriptLang::PowerShell, file) => {
+                let mut c = Command::new("pwsh");
+                c.args(["-NoProfile", if file { "-File" } else { "-Command" }, r.source]);
+                c
+            }
+        };
+        cmd.envs(r.env.iter().map(|(k, v)| (k, v))).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        if let Some(cwd) = r.cwd {
+            cmd.current_dir(cwd);
+        }
+        let mut child = cmd.spawn().map_err(|e| format!("无法启动脚本: {e}"))?;
+        let (mut so, mut se) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
+        let out_t = std::thread::spawn(move || {
+            let mut s = String::new();
+            let _ = so.read_to_string(&mut s);
+            s
+        });
+        let err_t = std::thread::spawn(move || {
+            let mut s = String::new();
+            let _ = se.read_to_string(&mut s);
+            s
+        });
+        let start = Instant::now();
+        let status = loop {
+            if let Some(st) = child.try_wait().map_err(|e| e.to_string())? {
+                break st;
+            }
+            if start.elapsed() > r.timeout {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("脚本运行超时（>{}s），已终止", r.timeout.as_secs()));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        Ok(ScriptOutput {
+            code: status.code().unwrap_or(-1),
+            stdout: out_t.join().unwrap_or_default(),
+            stderr: err_t.join().unwrap_or_default(),
+        })
+    }
+
+    fn confirm(&self, title: &str, message: &str) -> bool {
+        // osascript shows a standard dialog without having to activate this (accessory) app.
+        let script = format!(
+            "display dialog {} with title {} buttons {{\"取消\", \"确定\"}} default button \"确定\" cancel button \"取消\" with icon caution",
+            applescript_string(message),
+            applescript_string(title)
+        );
+        Command::new("/usr/bin/osascript").args(["-e", &script]).output().map(|o| o.status.success()).unwrap_or(false)
+    }
+
+    fn notify(&self, title: &str, message: &str) {
+        let script = format!("display notification {} with title {}", applescript_string(message), applescript_string(title));
+        let _ = Command::new("/usr/bin/osascript").args(["-e", &script]).spawn();
+    }
+}
+
+pub struct MacFiles;
+
+impl FileOps for MacFiles {
+    fn trash(&self, paths: &[PathBuf]) -> Result<(), String> {
+        trash::delete_all(paths).map_err(|e| format!("移到废纸篓失败: {e}"))
+    }
+
+    fn set_clipboard_files(&self, paths: &[PathBuf]) -> Result<(), String> {
+        autoreleasepool(|_| {
+            let urls: Vec<Retained<ProtocolObject<dyn objc2_app_kit::NSPasteboardWriting>>> = paths
+                .iter()
+                .map(|p| ProtocolObject::from_retained(NSURL::fileURLWithPath(&NSString::from_str(&p.to_string_lossy()))))
+                .collect();
+            let pb = NSPasteboard::generalPasteboard();
+            pb.clearContents();
+            if pb.writeObjects(&NSArray::from_retained_slice(&urls)) {
+                Ok(())
+            } else {
+                Err("写入剪贴板失败".into())
+            }
+        })
+    }
+
+    fn clipboard_files(&self) -> Vec<PathBuf> {
+        autoreleasepool(|_| {
+            let pb = NSPasteboard::generalPasteboard();
+            let classes = NSArray::from_slice(&[NSURL::class()]);
+            let Some(items) = (unsafe { pb.readObjectsForClasses_options(&classes, None) }) else { return vec![] };
+            items
+                .iter()
+                .filter_map(|o| o.downcast::<NSURL>().ok())
+                .filter(|u| u.isFileURL())
+                .filter_map(|u| u.path().map(|p| PathBuf::from(p.to_string())))
+                .collect()
+        })
+    }
+
+    fn set_clipboard_text(&self, text: &str) -> Result<(), String> {
+        autoreleasepool(|_| {
+            let pb = NSPasteboard::generalPasteboard();
+            pb.clearContents();
+            if pb.setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString }) {
+                Ok(())
+            } else {
+                Err("写入剪贴板失败".into())
+            }
+        })
+    }
+
+    fn clipboard_text(&self) -> Option<String> {
+        autoreleasepool(|_| {
+            NSPasteboard::generalPasteboard().stringForType(unsafe { NSPasteboardTypeString }).map(|s| s.to_string())
+        })
+    }
+
+    fn zip(&self, base: &Path, paths: &[PathBuf], dest: &Path) -> Result<(), String> {
+        let mut cmd = Command::new("/usr/bin/zip");
+        // -y: keep symlinks as links; -X: no extra macOS attributes.
+        cmd.current_dir(base).args(["-r", "-q", "-y", "-X"]).arg(dest);
+        for p in paths {
+            cmd.arg(p.strip_prefix(base).unwrap_or(p));
+        }
+        run(&mut cmd).map_err(|e| format!("压缩失败: {e}"))
+    }
+}
+
+pub struct MacPerms;
+
+impl Permissions for MacPerms {
+    fn status(&self, p: Permission) -> PermState {
+        match p {
+            Permission::Accessibility => {
+                if unsafe { AXIsProcessTrusted() } {
+                    PermState::Granted
+                } else {
+                    PermState::Denied
+                }
+            }
+            Permission::AutomationFinder => match automation_permission(FINDER, false) {
+                0 => PermState::Granted,
+                ERR_AE_NOT_PERMITTED => PermState::Denied,
+                ERR_AE_NEEDS_CONSENT => PermState::NotDetermined,
+                _ => PermState::Unknown,
+            },
+        }
+    }
+
+    fn request(&self, p: Permission) {
+        match p {
+            Permission::Accessibility => unsafe {
+                let keys = [kAXTrustedCheckOptionPrompt];
+                let vals = [kCFBooleanTrue];
+                let dict = Cf(CFDictionaryCreate(
+                    std::ptr::null(),
+                    keys.as_ptr(),
+                    vals.as_ptr(),
+                    1,
+                    &kCFTypeDictionaryKeyCallBacks as *const _,
+                    &kCFTypeDictionaryValueCallBacks as *const _,
+                ));
+                AXIsProcessTrustedWithOptions(dict.0);
+            },
+            // Blocks until the user answers the prompt, so never on the main thread.
+            Permission::AutomationFinder => {
+                std::thread::spawn(|| automation_permission(FINDER, true));
+            }
+        }
+    }
+
+    fn open_settings(&self, p: Permission) {
+        let anchor = match p {
+            Permission::Accessibility => "Privacy_Accessibility",
+            Permission::AutomationFinder => "Privacy_Automation",
+        };
+        let _ = Command::new("/usr/bin/open").arg(format!("x-apple.systempreferences:com.apple.preference.security?{anchor}")).status();
+    }
+}
+
+pub struct MacIcons;
+
+fn app_path(target: &str) -> Option<String> {
+    if target.starts_with('/') || target.starts_with('~') {
+        return Some(expand_tilde(target));
+    }
+    if is_bundle_id(target) {
+        return NSWorkspace::sharedWorkspace()
+            .URLForApplicationWithBundleIdentifier(&NSString::from_str(target))
+            .and_then(|u| u.path())
+            .map(|p| p.to_string());
+    }
+    let name = target.trim_end_matches(".app");
+    ["/Applications", "/System/Applications", "/System/Applications/Utilities", "/Applications/Utilities"]
+        .iter()
+        .map(|d| format!("{d}/{name}.app"))
+        .chain(std::env::var("HOME").ok().map(|h| format!("{h}/Applications/{name}.app")))
+        .find(|p| Path::new(p).exists())
+}
+
+impl Icons for MacIcons {
+    fn app_icon_png(&self, target: &str, size: u32) -> Option<Vec<u8>> {
+        autoreleasepool(|_| {
+            let path = app_path(target)?;
+            let img = NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(&path));
+            let s = size as f64;
+            img.setSize(NSSize::new(s, s));
+            let mut rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(s, s));
+            let cg = unsafe { img.CGImageForProposedRect_context_hints(&mut rect, None, None) }?;
+            let rep = NSBitmapImageRep::initWithCGImage(NSBitmapImageRep::alloc(), &cg);
+            let props: Retained<NSDictionary<objc2_app_kit::NSBitmapImageRepPropertyKey, AnyObject>> = NSDictionary::new();
+            let data = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &props) }?;
+            let len: usize = unsafe { msg_send![&*data, length] };
+            let ptr: *const u8 = unsafe { msg_send![&*data, bytes] };
+            if ptr.is_null() || len == 0 {
+                return None;
+            }
+            Some(unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec())
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_args() {
+        assert_eq!(open_app_args("com.apple.Terminal"), ["-b", "com.apple.Terminal"]);
+        assert_eq!(open_app_args("Visual Studio Code"), ["-a", "Visual Studio Code"]);
+        assert_eq!(open_app_args("Calculator"), ["-a", "Calculator"]);
+        assert_eq!(open_app_args("/Applications/Safari.app"), ["/Applications/Safari.app"]);
+        assert_eq!(open_app_args("Safari.app"), ["-a", "Safari.app"]);
+    }
+
+    #[test]
+    fn escapes_applescript() {
+        assert_eq!(applescript_string(r#"say "hi" \ bye"#), r#""say \"hi\" \\ bye""#);
+    }
+
+    #[test]
+    fn script_timeout_and_output() {
+        let sh = MacShell;
+        let env = vec![("ANYTOOLS_X".to_string(), "42".to_string())];
+        let out = sh
+            .run_script(&ScriptRun { lang: ScriptLang::Shell, source: "echo $ANYTOOLS_X; echo err >&2; exit 3", is_file: false, env: &env, cwd: None, timeout: Duration::from_secs(5) })
+            .unwrap();
+        assert_eq!((out.code, out.stdout.trim(), out.stderr.trim()), (3, "42", "err"));
+        let t = Instant::now();
+        let err = sh
+            .run_script(&ScriptRun { lang: ScriptLang::Shell, source: "sleep 5", is_file: false, env: &[], cwd: None, timeout: Duration::from_millis(200) })
+            .unwrap_err();
+        assert!(err.contains("超时") && t.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn zip_relative_to_base() {
+        let dir = std::env::temp_dir().join(format!("anytools-zip-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        std::fs::write(dir.join("sub/b.txt"), "b").unwrap();
+        let dest = dir.join("out.zip");
+        MacFiles.zip(&dir, &[dir.join("a.txt"), dir.join("sub")], &dest).unwrap();
+        let list = Command::new("/usr/bin/unzip").arg("-Z1").arg(&dest).output().unwrap();
+        let names = String::from_utf8_lossy(&list.stdout);
+        assert!(names.lines().any(|l| l == "a.txt") && names.lines().any(|l| l == "sub/b.txt"), "{names}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

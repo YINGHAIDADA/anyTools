@@ -1,0 +1,19 @@
+[package]
+name = "anytools-wheel"
+description = "anyTools quick wheel module"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anytools-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+base64.workspace = true
+
+[dev-dependencies]
+anytools-platform.workspace = true
+anytools-actions.workspace = true
+serde_yaml_ng.workspace = true

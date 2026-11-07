@@ -1,0 +1,18 @@
+[package]
+name = "anytools-actions"
+description = "Built-in anyTools actions: keys, text, launch, open, scripts, file operations, sequences"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anytools-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+anytools-platform.workspace = true
+serde_yaml_ng.workspace = true
+tempfile.workspace = true

@@ -1,0 +1,34 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/platform", "crates/actions", "crates/modules/wheel", "app"]
+# The M0 proof of concept is a separate, throwaway project.
+exclude = ["poc"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+
+[workspace.dependencies]
+anytools-core = { path = "crates/core" }
+anytools-platform = { path = "crates/platform" }
+anytools-actions = { path = "crates/actions" }
+anytools-wheel = { path = "crates/modules/wheel" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+regex = "1"
+notify = "8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+base64 = "0.23"
+tempfile = "3"
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = 3
+lto = "thin"

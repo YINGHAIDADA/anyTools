@@ -1,0 +1,104 @@
+# anyTools 配置文件。保存后自动生效；写错时会提示错误，并继续使用上一份正确的配置。
+# 「mod」在 macOS 上是 ⌘，在 Windows 上是 Ctrl。平台不同的值可以写成 { mac: ..., win: ... }。
+version: 1
+
+settings:
+  theme: dark
+  accent: system
+  # 「在此打开终端」用的终端：应用名或 bundle id，如 iTerm、Warp、com.mitchellh.ghostty
+  terminal: { mac: com.apple.Terminal, win: wt.exe }
+  # 毛玻璃材质：hud | popover | menu | sidebar | fullscreen-ui | under-window
+  material: hud
+
+modules:
+  wheel:
+    triggers:
+      # 按住唤起，移到一格上松开执行；短按则轮盘保持打开，点击选择（tap: click）。
+      - keys: { mac: "alt+space", win: "capslock" }
+        tap: click
+      # 鼠标中键按住唤起（去掉下面两行的 # 启用）
+      # - button: middle
+      #   tap: none
+
+    # 按顺序匹配，第一条满足的规则生效；都不满足时用 default 轮盘。
+    # 可用条件：app、title（窗口标题正则）、selection（none/files/file/folder）、ext、count、platform
+    profiles:
+      - when: { selection: files }
+        wheel: files
+      - when: { app: { mac: com.apple.finder, win: explorer.exe } }
+        wheel: folder
+      - when: { app: { mac: [com.microsoft.VSCode, com.todesktop.230313mzl4w4u92], win: [Code.exe, Cursor.exe] } }
+        wheel: code
+      - when: { app: { mac: [com.apple.Safari, com.google.Chrome, com.microsoft.edgemac, company.thebrowser.Browser], win: [chrome.exe, msedge.exe] } }
+        wheel: browser
+
+    wheels:
+      default:
+        name: 快捷轮盘
+        items:
+          - { id: copy, label: 复制, icon: Copy, action: { type: keystroke, keys: "mod+c" } }
+          - { id: paste, label: 粘贴, icon: ClipboardPaste, action: { type: keystroke, keys: "mod+v" } }
+          - { id: shot, label: 截图, icon: Crop, action: { type: keystroke, keys: { mac: "cmd+shift+4", win: "win+shift+s" } } }
+          - { id: term, label: 终端, icon: "app:auto", action: { type: launch, target: { mac: com.apple.Terminal, win: wt.exe } } }
+          - { id: apps, label: 应用, icon: LayoutGrid, action: { type: submenu, wheel: apps } }
+          - { id: undo, label: 撤销, icon: Undo2, action: { type: keystroke, keys: "mod+z" } }
+          - id: date
+            label: 插入日期
+            icon: CalendarDays
+            action:
+              type: sequence
+              steps:
+                - { type: shell, code: { mac: "date '+%Y-%m-%d' | tr -d '\\n' | pbcopy", win: "Get-Date -Format yyyy-MM-dd | Set-Clipboard" } }
+                - { type: keystroke, keys: "mod+v" }
+          - { id: lock, label: 锁屏, icon: Lock, action: { type: keystroke, keys: { mac: "ctrl+cmd+q", win: "win+l" } } }
+
+      apps:
+        name: 应用
+        items:
+          - { label: 访达, action: { type: launch, target: { mac: com.apple.finder, win: explorer.exe } } }
+          - { label: 浏览器, action: { type: launch, target: { mac: com.apple.Safari, win: msedge.exe } } }
+          - { label: 计算器, action: { type: launch, target: { mac: com.apple.calculator, win: calc.exe } } }
+          - { label: 备忘录, action: { type: launch, target: { mac: com.apple.Notes, win: notepad.exe } } }
+          - { label: 系统设置, icon: "app:com.apple.systempreferences", action: { type: open, target: { mac: "/System/Applications/System Settings.app", win: "ms-settings:" } } }
+          - { label: 活动监视器, action: { type: launch, target: { mac: com.apple.ActivityMonitor, win: taskmgr.exe } } }
+
+      files:
+        name: 文件
+        items:
+          - { id: term, label: 在此打开终端, icon: SquareTerminal, action: { type: file.open_terminal } }
+          - { id: copy, label: 复制, icon: Copy, action: { type: file.copy } }
+          - { id: cut, label: 剪切, icon: Scissors, action: { type: file.cut } }
+          - { id: paste, label: 粘贴到此, icon: ClipboardPaste, action: { type: file.paste_here } }
+          - { id: path, label: 复制路径, icon: Link, action: { type: file.copy_path } }
+          - { id: zip, label: 压缩, icon: FileArchive, action: { type: file.zip } }
+          - { id: code, label: 用 VS Code 打开, icon: "app:com.microsoft.VSCode", action: { type: file.open_with, app: { mac: com.microsoft.VSCode, win: code } } }
+          - { id: trash, label: 移到废纸篓, icon: Trash2, action: { type: file.trash, confirm: true } }
+
+      # Finder 在前台但没有选中文件时
+      folder:
+        name: 文件夹
+        items:
+          - { label: 在此打开终端, icon: SquareTerminal, action: { type: file.open_terminal } }
+          - { label: 粘贴到此, icon: ClipboardPaste, action: { type: file.paste_here } }
+          - { label: 新建文件夹, icon: FolderPlus, action: { type: file.new_folder } }
+          - { label: 复制路径, icon: Link, action: { type: file.copy_path } }
+          - { label: 显示隐藏文件, icon: Eye, action: { type: keystroke, keys: { mac: "cmd+shift+." } } }
+          - { label: 应用, icon: LayoutGrid, action: { type: submenu, wheel: apps } }
+
+      code:
+        name: 编辑器
+        extends: default
+        remove: [shot, date]
+        add:
+          - { id: palette, label: 命令面板, icon: Command, action: { type: keystroke, keys: "mod+shift+p" } }
+          - { id: format, label: 格式化, icon: AlignLeft, action: { type: keystroke, keys: { mac: "alt+shift+f", win: "alt+shift+f" } } }
+
+      browser:
+        name: 浏览器
+        items:
+          - { label: 新标签页, icon: Plus, action: { type: keystroke, keys: "mod+t" } }
+          - { label: 重新打开, icon: RotateCcw, action: { type: keystroke, keys: "mod+shift+t" } }
+          - { label: 前进, icon: ArrowRight, action: { type: keystroke, keys: { mac: "cmd+]", win: "alt+right" } } }
+          - { label: 刷新, icon: RefreshCw, action: { type: keystroke, keys: "mod+r" } }
+          - { label: 关闭标签页, icon: X, action: { type: keystroke, keys: "mod+w" } }
+          - { label: 后退, icon: ArrowLeft, action: { type: keystroke, keys: { mac: "cmd+[", win: "alt+left" } } }

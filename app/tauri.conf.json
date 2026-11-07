@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "anyTools",
+  "version": "0.1.0",
+  "identifier": "com.anytools.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5174",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../ui/dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "overlay",
+        "url": "overlay.html",
+        "title": "anyTools overlay",
+        "width": 420,
+        "height": 420,
+        "transparent": true,
+        "decorations": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false,
+        "shadow": false,
+        "backgroundThrottling": "disabled"
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.png"],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "entitlements": "./entitlements.plist"
+    }
+  }
+}

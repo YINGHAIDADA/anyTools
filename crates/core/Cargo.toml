@@ -1,0 +1,18 @@
+[package]
+name = "anytools-core"
+description = "anyTools core: modules, registry, event bus, config, resolver, platform traits"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+regex.workspace = true
+notify.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
