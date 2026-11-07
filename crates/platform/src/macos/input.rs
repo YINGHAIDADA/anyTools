@@ -112,6 +112,7 @@ extern "C" fn tap_callback(_proxy: *mut c_void, ty: u32, e: CGEventRef, _info: *
                 mods,
                 repeat: CGEventGetIntegerValueField(e, F_AUTOREPEAT) != 0,
                 at: at(),
+                ch: typed_char(e),
             },
             EV_KEY_UP => InputEvent::KeyUp { code: CGEventGetIntegerValueField(e, F_KEYCODE) as u32, mods },
             EV_FLAGS => InputEvent::Flags { mods },
@@ -122,6 +123,14 @@ extern "C" fn tap_callback(_proxy: *mut c_void, ty: u32, e: CGEventRef, _info: *
             EV_RIGHT_UP => InputEvent::Up { button: Button::Right },
             EV_OTHER_DOWN => InputEvent::Down { button: other_button(), at: at() },
             EV_OTHER_UP => InputEvent::Up { button: other_button() },
+            EV_SCROLL => {
+                let precise = CGEventGetIntegerValueField(e, F_SCROLL_CONTINUOUS) != 0;
+                let dy = if precise { CGEventGetIntegerValueField(e, F_SCROLL_POINT_DELTA_Y) } else { CGEventGetIntegerValueField(e, F_SCROLL_DELTA_Y) };
+                if dy == 0 {
+                    return e;
+                }
+                InputEvent::Scroll { dy: dy as f64, precise, at: at() }
+            }
             _ => return e,
         };
         if filter.handle(ev, now) {
@@ -129,6 +138,18 @@ extern "C" fn tap_callback(_proxy: *mut c_void, ty: u32, e: CGEventRef, _info: *
         } else {
             e
         }
+    }
+}
+
+/// The printable character a key event types (layout-aware, no input method), if any.
+unsafe fn typed_char(e: CGEventRef) -> Option<char> {
+    let mut buf = [0u16; 4];
+    let mut n = 0usize;
+    CGEventKeyboardGetUnicodeString(e, buf.len(), &mut n, buf.as_mut_ptr());
+    let mut it = char::decode_utf16(buf[..n.min(buf.len())].iter().copied());
+    match (it.next(), it.next()) {
+        (Some(Ok(c)), None) if !c.is_control() && !('\u{F700}'..='\u{F8FF}').contains(&c) => Some(c),
+        _ => None,
     }
 }
 
@@ -150,7 +171,7 @@ impl InputHook for MacInput {
             .spawn(move || unsafe {
                 let mask = [
                     EV_LEFT_DOWN, EV_LEFT_UP, EV_RIGHT_DOWN, EV_RIGHT_UP, EV_MOVED, EV_LEFT_DRAG, EV_RIGHT_DRAG,
-                    EV_KEY_DOWN, EV_KEY_UP, EV_FLAGS, EV_OTHER_DOWN, EV_OTHER_UP, EV_OTHER_DRAG,
+                    EV_KEY_DOWN, EV_KEY_UP, EV_FLAGS, EV_OTHER_DOWN, EV_OTHER_UP, EV_OTHER_DRAG, EV_SCROLL,
                 ]
                 .iter()
                 .fold(0u64, |m, t| m | (1u64 << t));

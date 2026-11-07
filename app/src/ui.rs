@@ -53,12 +53,14 @@ impl Ui for TauriUi {
             use anytools_platform::macos::overlay;
             let app = self.app.clone();
             match cmd {
-                OverlayCmd::Show { session, frame, shape, payload } => {
+                OverlayCmd::Show { session, frame, shape, channel, payload } => {
                     let shape = serde_json::from_value(shape).ok();
                     let _ = self.app.run_on_main_thread(move || {
                         // Tell the page first (its work is async in the web process), then reveal natively:
                         // the pre-rendered page means the first visible frame never waits for the web process.
-                        let _ = app.emit_to(OVERLAY, "wheel:show", payload);
+                        if !payload.is_null() {
+                            let _ = app.emit_to(OVERLAY, channel, payload);
+                        }
                         overlay::show(session, frame, shape);
                     });
                 }

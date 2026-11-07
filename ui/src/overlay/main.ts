@@ -1,7 +1,7 @@
 /*
  * Wheel overlay page.
  *
- * Latency model (poc/M0-RESULTS.md): the native window is invisible (alpha 0) between sessions, and
+ * Latency model (docs/M0-RESULTS.md): the native window is invisible (alpha 0) between sessions, and
  * this page keeps every wheel pre-built and the most likely one attached in its "armed" state. On
  * trigger the native side fades the window in at once, so the first visible frame never waits for this
  * page; the page's own work (spring scale-in, center text, swapping to another wheel) lands a frame
@@ -14,6 +14,7 @@ import { sectorPath, polar } from '../shared/geometry';
 import { iconElement, lucideSvg } from '../shared/icons';
 import type { Geom, Settings, Snapshot, WheelView } from '../shared/types';
 import { createLight, palette, type LightRenderer, type LightState } from './light';
+import { leavePanelMode } from './panel';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const $ = <T extends Element = HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
@@ -228,6 +229,18 @@ function refreshAppIcons(): void {
 // State changes (cheap: class toggles only)
 // ------------------------------------------------------------------------------------------------
 
+/** Dynamic wheels (a menu action's choices) are computed when opened; build them on the spot. */
+function ensure(view: WheelView): void {
+  if (!view.dynamic || !geom || !defs) return;
+  const old = cache.get(view.key);
+  if (old && attached === view.key) {
+    old.root.remove();
+    old.fg.remove();
+    attached = null;
+  }
+  cache.set(view.key, buildWheel(view, geom, defs));
+}
+
 function attach(key: string): Built | undefined {
   const w = cache.get(key);
   if (!w) return undefined;
@@ -389,8 +402,11 @@ interface ShowPayload {
 
 void listen<ShowPayload>('wheel:show', ({ payload: p }) => {
   const tRecv = performance.now();
+  // The panel may still be fading out in this window.
+  leavePanelMode();
   const prebuilt = attached === p.wheel.key && cur === null;
   if (cur !== null) arm(); // a new session began before the previous one finished hiding
+  ensure(p.wheel);
   const w = attach(p.wheel.key);
   if (!w) return;
   resetVisual(w);
@@ -441,6 +457,7 @@ void listen<{ seq: number; wheel: WheelView; disabled: boolean[]; depth: number 
   setTimeout(() => {
     if (cur?.seq !== seq) return;
     resetVisual(cache.get(cur.key));
+    ensure(payload.wheel);
     const w = attach(payload.wheel.key);
     if (!w) return;
     cur.key = payload.wheel.key;

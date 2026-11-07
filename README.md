@@ -64,9 +64,10 @@ cd ui && npm run typecheck
 | `crates/actions` | 内置动作：快捷键、文本、启动、打开、外部脚本、序列、`file.*` |
 | `crates/script` | 内嵌 JS/TS 脚本：QuickJS 运行时、API、权限声明与授权 |
 | `crates/modules/wheel` | 轮盘模块：配置编译、状态机、几何 |
+| `crates/modules/clipboard` | 剪贴板历史模块：记录与存盘、面板状态机、`clipboard.*` 动作 |
 | `app` | Tauri 主程序：菜单栏图标、浮层、设置窗口、开机启动、崩溃记录、更新、默认配置 |
 | `ui` | 浮层页面（纯 TS）和设置窗口（React，含轮盘与规则编辑器） |
 | `scripts` | 发布脚本 |
-| `poc` | M0 技术验证（临时代码） |
+| `docs` | M0 验证结果（验证代码已删除，可在 git 历史中找回） |
 
 GPL-3.0

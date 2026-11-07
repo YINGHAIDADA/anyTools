@@ -21,6 +21,25 @@
         </div>
       </div>
     </div>
+    <!-- Clipboard panel (shares this window with the wheel; see src/overlay/panel.ts). -->
+    <div id="panel">
+      <div id="panel-search">
+        <span id="panel-search-icon"></span>
+        <span id="panel-query"></span><span id="panel-caret"></span>
+        <span id="panel-count"></span>
+      </div>
+      <div id="panel-body">
+        <div id="panel-list"></div>
+        <div id="panel-empty" hidden></div>
+        <div id="panel-scroll" hidden><i></i></div>
+      </div>
+      <div id="panel-foot">
+        <span><kbd>↩</kbd>粘贴</span>
+        <span><kbd>⇧↩</kbd>仅复制</span>
+        <span><kbd>⌘⌫</kbd>删除</span>
+        <span><kbd>esc</kbd>关闭</span>
+      </div>
+    </div>
     <script type="module" src="/src/overlay/main.ts"></script>
   </body>
 </html>

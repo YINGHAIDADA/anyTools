@@ -1,7 +1,7 @@
 //! The shared overlay window: non-activating, click-through, on all Spaces, with a native
 //! NSVisualEffectView (glass) behind a transparent webview. Main thread only.
 //!
-//! Latency design (see poc/M0-RESULTS.md): the window stays ordered in at alpha 0 between uses and the
+//! Latency design (see docs/M0-RESULTS.md): the window stays ordered in at alpha 0 between uses and the
 //! webview's occlusion detection is off, so the page keeps the next frame rendered. Showing is just a
 //! native alpha animation; it never waits for the web process.
 
@@ -22,7 +22,7 @@ use serde::Deserialize;
 use std::cell::RefCell;
 use std::ffi::c_void;
 
-/// Glass mask: the union of polygons and circles, in window coordinates (y down).
+/// Glass mask: the union of polygons, circles and rounded rects, in window coordinates (y down).
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 pub struct Shape {
     pub size: [f64; 2],
@@ -30,9 +30,22 @@ pub struct Shape {
     pub polys: Vec<Vec<[f64; 2]>>,
     #[serde(default)]
     pub circles: Vec<[f64; 3]>,
+    /// `[x, y, w, h, corner_radius]`.
+    #[serde(default)]
+    pub rrects: Vec<[f64; 5]>,
     /// `[cx, cy, r]`: the disc the liquid glass covers (it can only be a circle or rounded rect).
     #[serde(default)]
     pub disc: Option<[f64; 3]>,
+    /// `[x, y, w, h, corner_radius]`: a rounded rect for the liquid glass instead of `disc`.
+    #[serde(default)]
+    pub glass: Option<[f64; 5]>,
+}
+
+impl Shape {
+    /// The liquid glass area as `[x, y, w, h, corner_radius]` (y down).
+    fn glass_rect(&self) -> Option<[f64; 5]> {
+        self.glass.or(self.disc.map(|[cx, cy, r]| [cx - r, cy - r, 2.0 * r, 2.0 * r, r]))
+    }
 }
 
 struct Overlay {
@@ -64,10 +77,10 @@ fn glass_style(material: &str) -> NSGlassEffectViewStyle {
     }
 }
 
-fn disc_rect(d: [f64; 3], win_h: f64) -> NSRect {
-    let [cx, cy, r] = d;
+fn glass_frame(g: [f64; 5], win_h: f64) -> NSRect {
+    let [x, y, w, h, _] = g;
     // AppKit views are y-up; the shape is y-down.
-    NSRect::new(NSPoint::new(cx - r, win_h - cy - r), NSSize::new(2.0 * r, 2.0 * r))
+    NSRect::new(NSPoint::new(x, win_h - y - h), NSSize::new(w, h))
 }
 
 thread_local! {
@@ -105,6 +118,13 @@ fn mask_image(shape: &Shape) -> Retained<NSImage> {
                 NSPoint::new(cx - r, cy - r),
                 NSSize::new(2.0 * r, 2.0 * r),
             )));
+        }
+        for [x, y, w, h, r] in &s.rrects {
+            path.appendBezierPath(&NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(
+                NSRect::new(NSPoint::new(*x, *y), NSSize::new(*w, *h)),
+                *r,
+                *r,
+            ));
         }
         NSColor::blackColor().setFill();
         path.fill();
@@ -206,10 +226,10 @@ fn apply_material(ov: &mut Overlay, name: &str) -> bool {
 }
 
 fn layout_glass(ov: &Overlay) {
-    let (Some(g), Some(d)) = (&ov.glass, ov.shape.disc) else { return };
+    let (Some(g), Some(r)) = (&ov.glass, ov.shape.glass_rect()) else { return };
     let h = ov.window.contentView().map(|v| v.bounds().size.height).unwrap_or(ov.shape.size[1]);
-    g.setFrame(disc_rect(d, h));
-    g.setCornerRadius(d[2]);
+    g.setFrame(glass_frame(r, h));
+    g.setCornerRadius(r[4]);
 }
 
 fn disable_occlusion_detection(wkwebview: *mut c_void) -> bool {
@@ -253,11 +273,12 @@ pub fn show(session: u64, frame: Frame, shape: Option<Shape>) {
     OVERLAY.with(|o| {
         let mut o = o.borrow_mut();
         let Some(ov) = o.as_mut() else { return };
+        let rect = NSRect::new(NSPoint::new(frame.x, ov.primary_h - (frame.y + frame.h)), NSSize::new(frame.w, frame.h));
+        ov.window.setFrame_display(rect, false);
+        // After the frame: the glass is laid out against the window's (possibly new) height.
         if let Some(s) = shape {
             apply_shape(ov, s);
         }
-        let rect = NSRect::new(NSPoint::new(frame.x, ov.primary_h - (frame.y + frame.h)), NSSize::new(frame.w, frame.h));
-        ov.window.setFrame_display(rect, false);
         ov.window.setAlphaValue(0.0);
         if !ov.window.isVisible() {
             ov.window.orderFrontRegardless();
@@ -320,8 +341,11 @@ mod tests {
 
     #[test]
     fn shape_parses() {
-        let s: Shape = serde_json::from_str(r#"{"size":[420,420],"polys":[[[0,0],[10,0],[10,10]]],"circles":[[210,210,52]]}"#).unwrap();
+        let s: Shape = serde_json::from_str(r#"{"size":[420,420],"polys":[[[0,0],[10,0],[10,10]]],"circles":[[210,210,52]],"disc":[210,210,150]}"#).unwrap();
         assert_eq!(s.polys[0].len(), 3);
         assert_eq!(s.circles[0], [210.0, 210.0, 52.0]);
+        assert_eq!(s.glass_rect(), Some([60.0, 60.0, 300.0, 300.0, 150.0]));
+        let p: Shape = serde_json::from_str(r#"{"size":[400,460],"rrects":[[0,0,400,460,24]],"glass":[0,0,400,460,24]}"#).unwrap();
+        assert_eq!(p.glass_rect(), Some([0.0, 0.0, 400.0, 460.0, 24.0]));
     }
 }

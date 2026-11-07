@@ -21,6 +21,8 @@ export interface ItemView {
 export interface WheelView {
   key: string;
   name: string;
+  /** Computed when opened (a menu action such as recent clipboard entries); not pre-built. */
+  dynamic?: boolean;
   items: ItemView[];
 }
 

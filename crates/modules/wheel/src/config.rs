@@ -95,6 +95,14 @@ pub type WheelId = usize;
 pub enum ItemKind {
     Action(ActionSpec),
     Submenu(WheelId),
+    /// A menu action: its choices are computed when it opens and shown as a submenu.
+    Menu(ActionSpec),
+}
+
+impl ItemKind {
+    pub fn opens_submenu(&self) -> bool {
+        matches!(self, ItemKind::Submenu(_) | ItemKind::Menu(_))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -134,6 +142,8 @@ pub struct Compiled {
     pub triggers: Vec<Trigger>,
     /// Some profile looks at the window title (so it's worth fetching).
     pub needs_title: bool,
+    /// Some profile matches on selected text (so it's worth reading it outside file managers).
+    pub needs_text: bool,
 }
 
 impl Compiled {
@@ -306,7 +316,11 @@ pub fn compile_for(raw: &Value, reg: &Registry, kb: &dyn Keyboard, p: Platform) 
                 ItemKind::Submenu(wheel_ref(target, &at)?)
             } else {
                 reg.validate(&it.action).map_err(|e| format!("{at}：{e}"))?;
-                ItemKind::Action(it.action.clone())
+                if reg.is_menu(&it.action) {
+                    ItemKind::Menu(it.action.clone())
+                } else {
+                    ItemKind::Action(it.action.clone())
+                }
             };
             defs.push(ItemDef { id: item_id, label: it.label.clone(), icon: normalize_icon(it.icon.as_deref(), &it.action), kind });
         }
@@ -316,11 +330,13 @@ pub fn compile_for(raw: &Value, reg: &Registry, kb: &dyn Keyboard, p: Platform) 
 
     let mut profiles = Vec::new();
     let mut needs_title = false;
+    let mut needs_text = false;
     for (i, pr) in cfg.profiles.iter().enumerate() {
         let at = format!("第 {} 条规则", i + 1);
         let wcfg = pr.when.clone().unwrap_or_default();
         needs_title |= wcfg.title.is_some();
         let when = When::compile_for(&wcfg, p).map_err(|e| format!("{at}：{e}"))?;
+        needs_text |= when.uses_text();
         profiles.push((when, wheel_ref(&pr.wheel, &at)?));
     }
     let fallback = ids.get("default").copied().unwrap_or(0);
@@ -342,7 +358,7 @@ pub fn compile_for(raw: &Value, reg: &Registry, kb: &dyn Keyboard, p: Platform) 
         tracing::warn!("wheel: no trigger configured for this platform");
     }
 
-    Ok(Compiled { wheels, profiles, fallback, triggers, needs_title })
+    Ok(Compiled { wheels, profiles, fallback, triggers, needs_title, needs_text })
 }
 
 #[cfg(test)]

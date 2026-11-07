@@ -10,6 +10,8 @@ interface AnyToolsContext {
   app: { id: string; name: string; pid: number; title?: string | null } | null;
   /** Selected files in Finder / Explorer (absolute paths). */
   selection: string[];
+  /** Selected text in the front app (only read when a wheel rule uses `selection: text`). */
+  text: string | null;
   /** The file manager's current folder, or the parent of the first selected file. */
   cwd: string | null;
   platform: 'mac' | 'win' | 'other';
@@ -33,6 +35,8 @@ declare const keys: {
   send(chord: string): void;
   /** Types text into the front app. */
   type(text: string): void;
+  /** Pastes text into the front app (⌘V / Ctrl+V); the clipboard is left as it was. */
+  paste(text: string): void;
 };
 
 declare const clipboard: {

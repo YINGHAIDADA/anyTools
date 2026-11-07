@@ -58,6 +58,7 @@ name = "anytools"
 version = "0.1.0"
 dependencies = [
  "anytools-actions",
+ "anytools-clipboard",
  "anytools-core",
  "anytools-platform",
  "anytools-script",
@@ -86,6 +87,18 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "anytools-clipboard"
+version = "0.1.0"
+dependencies = [
+ "anytools-core",
+ "anytools-platform",
+ "serde",
+ "serde_json",
  "tempfile",
  "tracing",
 ]

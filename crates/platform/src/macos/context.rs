@@ -53,6 +53,68 @@ fn focused_window_title(pid: i32) -> Option<String> {
 }
 
 // ------------------------------------------------------------------------------------------------
+// Selected text: Accessibility first (no side effects), ⌘C as a fallback (clipboard restored).
+// ------------------------------------------------------------------------------------------------
+
+fn ax_copy(el: CFTypeRef, attr: &str) -> Option<Cf> {
+    unsafe {
+        let mut v: CFTypeRef = std::ptr::null();
+        if AXUIElementCopyAttributeValue(el, cfstr(attr).0, &mut v) != 0 || v.is_null() {
+            return None;
+        }
+        Some(Cf(v))
+    }
+}
+
+/// `AXSelectedText` of the focused element of `pid`. `Ok(None)` = the element answered and nothing is
+/// selected; `Err` = the app doesn't expose it (fall back to copying).
+fn ax_selected_text(pid: i32) -> Result<Option<String>, ()> {
+    unsafe {
+        let app = Cf(AXUIElementCreateApplication(pid));
+        if app.0.is_null() {
+            return Err(());
+        }
+        AXUIElementSetMessagingTimeout(app.0, 0.08);
+        let focused = ax_copy(app.0, "AXFocusedUIElement").ok_or(())?;
+        match ax_copy(focused.0, "AXSelectedText") {
+            Some(v) => Ok(cfstring_to_string(v.0).filter(|s| !s.trim().is_empty())),
+            None => Err(()),
+        }
+    }
+}
+
+fn copy_selection(timeout: Duration) -> Result<Option<String>, String> {
+    let files = super::system::MacFiles;
+    super::system::set_busy(true);
+    let res = copy_selection_inner(&files, timeout);
+    super::system::set_busy(false);
+    res
+}
+
+fn copy_selection_inner(files: &super::system::MacFiles, timeout: Duration) -> Result<Option<String>, String> {
+    use super::input::MacKeyboard;
+    use anytools_core::keys::{Chord, Mods};
+    use anytools_core::platform::{FileOps, Keyboard};
+    let snap = files.clipboard_snapshot();
+    let before = files.clipboard_change_count();
+    MacKeyboard.send_chord(&Chord { mods: Mods::CMD, key: "c".into() })?;
+    let start = std::time::Instant::now();
+    let mut text = None;
+    while start.elapsed() < timeout {
+        std::thread::sleep(Duration::from_millis(10));
+        if files.clipboard_change_count() != before {
+            text = files.clipboard_text().filter(|s| !s.trim().is_empty());
+            break;
+        }
+    }
+    // Only restore if the copy actually changed the clipboard (otherwise we'd bump changeCount for nothing).
+    if files.clipboard_change_count() != before {
+        files.clipboard_restore(&snap)?;
+    }
+    Ok(text)
+}
+
+// ------------------------------------------------------------------------------------------------
 // Finder probe: one dedicated thread owns the compiled NSAppleScript (it is not thread-safe).
 // ------------------------------------------------------------------------------------------------
 
@@ -187,6 +249,14 @@ impl ContextProbe for MacContext {
         let (tx, rx) = mpsc::channel();
         probe_tx().lock().unwrap().send(tx).map_err(|_| "Finder 探测线程已退出".to_string())?;
         rx.recv_timeout(timeout).map_err(|_| format!("读取 Finder 选中项超时（>{}ms）", timeout.as_millis()))?
+    }
+
+    fn text_selection(&self, app: &AppInfo, timeout: Duration, allow_copy: bool) -> Result<Option<String>, String> {
+        match ax_selected_text(app.pid) {
+            Ok(t) => Ok(t),
+            Err(()) if allow_copy => copy_selection(timeout),
+            Err(()) => Ok(None),
+        }
     }
 }
 

@@ -12,8 +12,9 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub enum OverlayCmd {
     /// Positions the window and fades it in. `shape` describes the glass mask (module-defined JSON,
-    /// interpreted by the platform overlay), `payload` goes to the overlay page.
-    Show { session: u64, frame: Frame, shape: Value, payload: Value },
+    /// interpreted by the platform overlay). Unless `payload` is null it is sent to the overlay page as
+    /// event `channel` first.
+    Show { session: u64, frame: Frame, shape: Value, channel: &'static str, payload: Value },
     /// Updates the glass mask (e.g. a submenu with a different number of sectors).
     Shape { session: u64, shape: Value },
     /// Fades out. `fade_ms` is the native fade duration.

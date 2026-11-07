@@ -29,6 +29,7 @@ extern "C" {
     pub fn CGEventSetFlags(e: CGEventRef, flags: u64);
     pub fn CGEventCreateKeyboardEvent(src: *mut c_void, key: u16, down: bool) -> CGEventRef;
     pub fn CGEventKeyboardSetUnicodeString(e: CGEventRef, len: usize, s: *const u16);
+    pub fn CGEventKeyboardGetUnicodeString(e: CGEventRef, max: usize, actual: *mut usize, s: *mut u16);
     pub fn CGEventPost(tap: u32, e: CGEventRef);
     pub fn CGEventSourceCreate(state: i32) -> *mut c_void;
     pub fn CGEventSourceFlagsState(state: i32) -> u64;
@@ -107,6 +108,7 @@ pub const EV_RIGHT_DRAG: u32 = 7;
 pub const EV_KEY_DOWN: u32 = 10;
 pub const EV_KEY_UP: u32 = 11;
 pub const EV_FLAGS: u32 = 12;
+pub const EV_SCROLL: u32 = 22;
 pub const EV_OTHER_DOWN: u32 = 25;
 pub const EV_OTHER_UP: u32 = 26;
 pub const EV_OTHER_DRAG: u32 = 27;
@@ -117,6 +119,9 @@ pub const EV_TAP_DISABLED_USER: u32 = 0xFFFF_FFFF;
 pub const F_BUTTON_NUMBER: u32 = 3;
 pub const F_AUTOREPEAT: u32 = 8;
 pub const F_KEYCODE: u32 = 9;
+pub const F_SCROLL_DELTA_Y: u32 = 11;
+pub const F_SCROLL_CONTINUOUS: u32 = 88;
+pub const F_SCROLL_POINT_DELTA_Y: u32 = 96;
 pub const F_USERDATA: u32 = 42;
 
 // CGEventFlags

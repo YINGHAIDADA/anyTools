@@ -34,6 +34,12 @@ pub struct MockState {
     pub clip_files: Vec<PathBuf>,
     pub clip_text: Option<String>,
     pub script_output: ScriptOutput,
+    pub selected_text: Option<String>,
+    /// Bumped on every clipboard write (like NSPasteboard.changeCount).
+    pub clip_changes: i64,
+    /// When set, the current clipboard content counts as sensitive (not for history).
+    pub clip_concealed: bool,
+    pub clip_restored_at: i64,
 }
 
 #[derive(Clone, Default)]
@@ -124,6 +130,9 @@ impl ContextProbe for Mock {
     fn file_selection(&self, _app: &AppInfo, _timeout: Duration) -> Result<FileSelection, String> {
         self.state.lock().unwrap().selection.clone().unwrap_or_else(|| Ok(FileSelection::default()))
     }
+    fn text_selection(&self, _app: &AppInfo, _timeout: Duration, _allow_copy: bool) -> Result<Option<String>, String> {
+        Ok(self.state.lock().unwrap().selected_text.clone())
+    }
 }
 
 impl Shell for Mock {
@@ -170,7 +179,12 @@ impl FileOps for Mock {
         self.state.lock().unwrap().clip_files.clone()
     }
     fn set_clipboard_text(&self, text: &str) -> Result<(), String> {
-        self.state.lock().unwrap().clip_text = Some(text.into());
+        {
+            let mut s = self.state.lock().unwrap();
+            s.clip_text = Some(text.into());
+            s.clip_changes += 1;
+            s.clip_concealed = false;
+        }
         self.push(Call::ClipText(text.into()));
         Ok(())
     }
@@ -179,6 +193,36 @@ impl FileOps for Mock {
     }
     fn zip(&self, base: &Path, paths: &[PathBuf], dest: &Path) -> Result<(), String> {
         self.push(Call::Zip(base.into(), paths.to_vec(), dest.into()));
+        Ok(())
+    }
+    fn clipboard_change_count(&self) -> i64 {
+        self.state.lock().unwrap().clip_changes
+    }
+    fn clipboard_text_for_history(&self) -> Option<String> {
+        let s = self.state.lock().unwrap();
+        if s.clip_concealed {
+            None
+        } else {
+            s.clip_text.clone()
+        }
+    }
+    fn clipboard_snapshot(&self) -> ClipboardSnapshot {
+        let s = self.state.lock().unwrap();
+        s.clip_text.iter().map(|t| vec![("public.utf8-plain-text".to_string(), t.as_bytes().to_vec())]).collect()
+    }
+    fn clipboard_restore(&self, snap: &ClipboardSnapshot) -> Result<(), String> {
+        let mut s = self.state.lock().unwrap();
+        s.clip_text = snap.first().and_then(|i| i.first()).map(|(_, b)| String::from_utf8_lossy(b).into_owned());
+        s.clip_changes += 1;
+        s.clip_restored_at = s.clip_changes;
+        Ok(())
+    }
+    fn clipboard_restored_at(&self) -> i64 {
+        self.state.lock().unwrap().clip_restored_at
+    }
+    fn set_clipboard_text_transient(&self, text: &str) -> Result<(), String> {
+        self.set_clipboard_text(text)?;
+        self.state.lock().unwrap().clip_concealed = true;
         Ok(())
     }
 }

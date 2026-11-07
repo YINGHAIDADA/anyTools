@@ -15,7 +15,7 @@ pub mod platform;
 pub mod registry;
 pub mod resolver;
 
-pub use action::{ActionCtx, ActionHandler, ActionSpec, Params};
+pub use action::{ActionCtx, ActionHandler, ActionSpec, MenuItem, Params};
 pub use config::{ConfigFile, ConfigStore, Settings};
 pub use context::{AppInfo, Context, Frame, Platform, Pt, Rect, ScreenInfo, Selection};
 pub use event::{CoreEvent, EventBus};

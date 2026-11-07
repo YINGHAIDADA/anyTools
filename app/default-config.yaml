@@ -22,7 +22,7 @@ modules:
       #   tap: none
 
     # 按顺序匹配，第一条满足的规则生效；都不满足时用 default 轮盘。
-    # 可用条件：app、title（窗口标题正则）、selection（none/files/file/folder）、ext、count、platform
+    # 可用条件：app、title（窗口标题正则）、selection（none/files/file/folder/text）、ext、count、platform
     profiles:
       - when: { selection: files }
         wheel: files
@@ -32,6 +32,9 @@ modules:
         wheel: code
       - when: { app: { mac: [com.apple.Safari, com.google.Chrome, com.microsoft.edgemac, company.thebrowser.Browser], win: [chrome.exe, msedge.exe] } }
         wheel: browser
+      # 选中了一段文字（放在按应用匹配的规则之后：编辑器、浏览器里仍用各自的轮盘）
+      - when: { selection: text }
+        wheel: text
 
     wheels:
       default:
@@ -51,7 +54,8 @@ modules:
               steps:
                 - { type: shell, code: { mac: "date '+%Y-%m-%d' | tr -d '\\n' | pbcopy", win: "Get-Date -Format yyyy-MM-dd | Set-Clipboard" } }
                 - { type: keystroke, keys: "mod+v" }
-          - { id: lock, label: 锁屏, icon: Lock, action: { type: keystroke, keys: { mac: "ctrl+cmd+q", win: "win+l" } } }
+          # 最近复制过的文字（划出或停留展开）
+          - { id: clips, label: 剪贴板, icon: ClipboardList, action: { type: clipboard.recent } }
 
       apps:
         name: 应用
@@ -103,3 +107,27 @@ modules:
           - { label: 刷新, icon: RefreshCw, action: { type: keystroke, keys: "mod+r" } }
           - { label: 关闭标签页, icon: X, action: { type: keystroke, keys: "mod+w" } }
           - { label: 后退, icon: ArrowLeft, action: { type: keystroke, keys: { mac: "cmd+[", win: "alt+left" } } }
+
+      # 选中文字时。动作里的 {text} 会替换成选中的文字（网址里自动编码）
+      text:
+        name: 文字
+        items:
+          - { id: copy, label: 复制, icon: Copy, action: { type: keystroke, keys: "mod+c" } }
+          - { id: search, label: 搜索, icon: Search, action: { type: open, target: "https://www.google.com/search?q={text}" } }
+          - { id: translate, label: 翻译, icon: Languages, action: { type: open, target: "https://translate.google.com/?sl=auto&tl=zh-CN&text={text}" } }
+          - { id: clips, label: 剪贴板, icon: ClipboardList, action: { type: clipboard.recent } }
+          - { id: upper, label: 转大写, icon: CaseUpper, action: { type: script, file: text/upper.ts } }
+          - { id: trim, label: 去掉空行, icon: WrapText, action: { type: script, file: text/compact.ts } }
+
+  # 剪贴板历史：只记录文字，存在本机（配置目录 state/clipboard.json，仅自己可读）。
+  # 密码管理器等标记为「敏感 / 临时」的内容不会记录。
+  clipboard:
+    enabled: true
+    # 唤起剪贴板面板：输入即搜索，↑↓ 选择，回车粘贴，⇧回车只复制，⌘1–9 直接粘贴，⌘⌫ 删除一条
+    # （没用 ⌘⇧V：它在多数应用里是「粘贴并匹配样式」）
+    trigger: { mac: "ctrl+cmd+v", win: "ctrl+alt+v" }
+    max: 200
+    # 轮盘里「剪贴板」显示的条数（2–12）
+    recent: 8
+    # 这些应用里复制的内容不记录（bundle id / 程序名）
+    ignore_apps: [com.apple.keychainaccess, com.1password.1password, com.bitwarden.desktop]

@@ -50,10 +50,18 @@ export interface WheelModuleCfg {
   wheels: Record<string, WheelCfg>;
 }
 
+export interface ClipboardCfg {
+  enabled: boolean;
+  trigger?: PP<string> | null;
+  max: number;
+  recent: number;
+  ignore_apps: string[];
+}
+
 export interface ConfigFile {
   version: number;
   settings: { theme: 'auto' | 'dark' | 'light'; accent: string; terminal?: PP<string> | null; material: string };
-  modules: { wheel?: WheelModuleCfg } & Record<string, unknown>;
+  modules: { wheel?: WheelModuleCfg; clipboard?: Partial<ClipboardCfg> } & Record<string, unknown>;
 }
 
 export type Platform = 'mac' | 'win';
@@ -102,7 +110,7 @@ export interface ActionDef {
   type: string;
   label: string;
   icon: string;
-  group: '常用' | '文件' | '脚本' | '组合';
+  group: '常用' | '文字' | '文件' | '脚本' | '组合';
   fields: FieldDef[];
 }
 
@@ -129,6 +137,8 @@ export const ACTIONS: ActionDef[] = [
   { type: 'launch', label: '启动应用', icon: 'AppWindow', group: '常用', fields: [{ key: 'target', label: '应用', kind: 'app', perPlatform: true, required: true }] },
   { type: 'open', label: '打开网址或文件', icon: 'ExternalLink', group: '常用', fields: [{ key: 'target', label: '地址 / 路径', kind: 'url', perPlatform: true, required: true, placeholder: 'https://… 或 ~/Documents' }] },
   { type: 'submenu', label: '打开子轮盘', icon: 'LayoutGrid', group: '常用', fields: [{ key: 'wheel', label: '轮盘', kind: 'wheel', required: true }] },
+  { type: 'clipboard.recent', label: '最近剪贴板（子轮盘）', icon: 'ClipboardList', group: '文字', fields: [] },
+  { type: 'clipboard.panel', label: '打开剪贴板面板', icon: 'ClipboardPaste', group: '文字', fields: [] },
   { type: 'file.open_terminal', label: '在此打开终端', icon: 'SquareTerminal', group: '文件', fields: [{ key: 'terminal', label: '终端（可选）', kind: 'app', perPlatform: true, hint: '留空则用设置中的默认终端' }] },
   { type: 'file.copy', label: '复制文件', icon: 'Copy', group: '文件', fields: [] },
   { type: 'file.cut', label: '剪切文件', icon: 'Scissors', group: '文件', fields: [] },

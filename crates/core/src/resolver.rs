@@ -110,6 +110,11 @@ impl When {
         self.selection.is_some() || self.ext.is_some() || self.count.is_some()
     }
 
+    /// Whether this rule needs the selected *text* (worth reading it outside file managers).
+    pub fn uses_text(&self) -> bool {
+        self.selection == Some(SelKind::Text)
+    }
+
     pub fn matches(&self, ctx: &Context) -> bool {
         self.matches_on(ctx, Platform::current())
     }
@@ -136,6 +141,7 @@ impl When {
             let ok = match (&ctx.selection, kind) {
                 (Selection::None, SelKind::None) => true,
                 (Selection::Files { paths }, SelKind::None) => paths.is_empty(),
+                (Selection::Text { text }, SelKind::None) => text.is_empty(),
                 (Selection::Files { paths }, SelKind::Files) => !paths.is_empty(),
                 (Selection::Files { paths }, SelKind::File) => !paths.is_empty() && paths.iter().all(|p| !p.is_dir()),
                 (Selection::Files { paths }, SelKind::Folder) => !paths.is_empty() && paths.iter().all(|p| p.is_dir()),
@@ -229,6 +235,21 @@ mod tests {
         assert!(!when("count: { max: 1 }", Platform::Mac).matches_on(&c, Platform::Mac));
         assert!(when("title: '\\.rs\\b'", Platform::Mac).matches_on(&c, Platform::Mac));
         assert!(When::compile(&serde_yaml_ng::from_str("title: '('").unwrap()).is_err());
+    }
+
+    #[test]
+    fn text_selection() {
+        let w = when("selection: text", Platform::Mac);
+        assert!(w.uses_text() && w.uses_selection());
+        let mut c = Context { selection_known: true, selection: Selection::Text { text: "hello".into() }, ..Default::default() };
+        assert!(w.matches_on(&c, Platform::Mac));
+        assert!(!when("selection: files", Platform::Mac).matches_on(&c, Platform::Mac));
+        c.selection = Selection::Text { text: String::new() };
+        assert!(!w.matches_on(&c, Platform::Mac));
+        assert!(when("selection: none", Platform::Mac).matches_on(&c, Platform::Mac));
+        c.selection_known = false;
+        c.selection = Selection::Text { text: "x".into() };
+        assert!(!w.matches_on(&c, Platform::Mac), "not before the probe finished");
     }
 
     #[test]

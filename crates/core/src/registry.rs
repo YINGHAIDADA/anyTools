@@ -1,4 +1,4 @@
-use crate::action::{ActionCtx, ActionHandler, ActionSpec};
+use crate::action::{ActionCtx, ActionHandler, ActionSpec, MenuItem};
 use crate::context::Context;
 use crate::platform::Services;
 use std::collections::BTreeMap;
@@ -38,5 +38,13 @@ impl Registry {
     pub fn run(&self, spec: &ActionSpec, ctx: &Context, services: &Services) -> Result<(), String> {
         let h = self.get(&spec.kind).ok_or_else(|| format!("未知的动作类型 \"{}\"", spec.kind))?;
         h.run(&spec.params, &ActionCtx { context: ctx, services, registry: self })
+    }
+
+    pub fn is_menu(&self, spec: &ActionSpec) -> bool {
+        self.get(&spec.kind).is_some_and(|h| h.is_menu())
+    }
+
+    pub fn menu(&self, spec: &ActionSpec, ctx: &Context) -> Vec<MenuItem> {
+        self.get(&spec.kind).map(|h| h.menu(&spec.params, ctx)).unwrap_or_default()
     }
 }

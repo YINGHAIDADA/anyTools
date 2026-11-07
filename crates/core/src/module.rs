@@ -28,6 +28,12 @@ pub trait Module: Send + Sync {
     fn on_input(&self, _ev: &InputEvent, _now: Instant) -> bool {
         false
     }
+    /// True while this module has an open session (a visible wheel or panel). New input (key and
+    /// button presses, scrolling) then goes to this module only, so another module can't open on top;
+    /// the others still see releases, modifier changes and moves.
+    fn exclusive(&self) -> bool {
+        false
+    }
     /// A message from the overlay page addressed to this module; the return value is the reply.
     fn on_overlay(&self, _msg: &Value) -> Value {
         Value::Null

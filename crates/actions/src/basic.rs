@@ -73,15 +73,14 @@ impl ActionHandler for Text {
         let p: TextP = params(self.kind(), p)?;
         let s = cx.services;
         if p.mode.as_deref() == Some("paste") {
-            let previous = s.files.clipboard_text();
-            s.files.set_clipboard_text(&p.text)?;
+            // Borrow the clipboard: the text is marked transient (clipboard history skips it), and the
+            // previous content comes back byte for byte afterwards.
+            let previous = s.files.clipboard_snapshot();
+            s.files.set_clipboard_text_transient(&p.text)?;
             s.keyboard.send_chord(&parse_chord("mod+v", Platform::current())?)?;
             // Give the target app time to read the clipboard before restoring it.
             std::thread::sleep(Duration::from_millis(250));
-            if let Some(prev) = previous {
-                s.files.set_clipboard_text(&prev)?;
-            }
-            Ok(())
+            s.files.clipboard_restore(&previous)
         } else {
             s.keyboard.type_text(&p.text)
         }
@@ -123,13 +122,40 @@ impl ActionHandler for Open {
     fn validate(&self, p: &Params, _: &Registry) -> Result<(), String> {
         params::<TargetP>(self.kind(), p).map(|_| ())
     }
-    fn available(&self, p: &Params, _: &Context) -> bool {
-        params::<TargetP>(self.kind(), p).is_ok_and(|p| configured_here(&p.target))
+    fn available(&self, p: &Params, ctx: &Context) -> bool {
+        params::<TargetP>(self.kind(), p).is_ok_and(|p| {
+            // A target that uses {text} needs selected text.
+            configured_here(&p.target) && p.target.get().is_some_and(|t| !t.contains("{text}") || selected_text(ctx).is_some())
+        })
     }
     fn run(&self, p: &Params, cx: &ActionCtx) -> Result<(), String> {
         let p: TargetP = params(self.kind(), p)?;
-        cx.services.shell.open(this_platform(self.kind(), &p.target)?)
+        let target = this_platform(self.kind(), &p.target)?;
+        let target = if target.contains("{text}") {
+            let text = selected_text(cx.context).ok_or("没有选中文字")?;
+            target.replace("{text}", &url_encode(text))
+        } else {
+            target.clone()
+        };
+        cx.services.shell.open(&target)
     }
+}
+
+fn selected_text(ctx: &Context) -> Option<&str> {
+    match &ctx.selection {
+        anytools_core::Selection::Text { text } if !text.trim().is_empty() => Some(text.trim()),
+        _ => None,
+    }
+}
+
+/// Percent-encodes everything except unreserved characters (RFC 3986), for `{text}` in URLs.
+fn url_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -235,6 +261,17 @@ mod tests {
     }
 
     #[test]
+    fn open_substitutes_selected_text() {
+        let (reg, mock) = setup();
+        let ctx = Context { selection: anytools_core::Selection::Text { text: " 你好 world&x ".into() }, selection_known: true, ..Default::default() };
+        run(&reg, &mock, &ctx, "{ type: open, target: 'https://www.google.com/search?q={text}' }").unwrap();
+        assert_eq!(mock.calls(), [Call::Open("https://www.google.com/search?q=%E4%BD%A0%E5%A5%BD%20world%26x".into())]);
+        let s = spec("{ type: open, target: 'https://x/?q={text}' }");
+        assert!(!reg.available(&s, &Context::default()), "needs selected text");
+        assert!(reg.available(&s, &ctx));
+    }
+
+    #[test]
     fn paste_mode_restores_clipboard() {
         let (reg, mock) = setup();
         mock.state.lock().unwrap().clip_text = Some("old".into());
@@ -242,6 +279,8 @@ mod tests {
         let calls = mock.calls();
         assert_eq!(calls[0], Call::ClipText("new".into()));
         assert!(matches!(calls[1], Call::Chord(_)));
-        assert_eq!(calls[2], Call::ClipText("old".into()));
+        let st = mock.state.lock().unwrap();
+        assert_eq!(st.clip_text.as_deref(), Some("old"));
+        assert_eq!(st.clip_restored_at, st.clip_changes, "history skips the restore");
     }
 }

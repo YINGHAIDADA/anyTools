@@ -15,6 +15,7 @@ const SEL_OPTIONS: { value: WhenCfg['selection'] | ''; label: string }[] = [
   { value: 'files', label: '选中了文件或文件夹' },
   { value: 'file', label: '只选中了文件' },
   { value: 'folder', label: '只选中了文件夹' },
+  { value: 'text', label: '选中了文字' },
   { value: 'none', label: '没有选中任何东西' },
 ];
 

@@ -1,5 +1,7 @@
 # M0 验证结果 · macOS 第 1 轮
 
+> 验证代码（原 `poc/` 目录）已在 M5 前删除，需要时可从提交 `1b2e20c` 及更早的历史中找回。
+
 > 2026-11-07 · macOS 27.0.1 · Apple Silicon · 60Hz 显示器 · release 构建
 > 原始数据：`~/Library/Logs/com.anytools.poc/m0-metrics.jsonl`（共 12 次唤起）
 

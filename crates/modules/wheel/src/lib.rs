@@ -7,8 +7,8 @@ pub mod geometry;
 use anytools_core::platform::{InputEvent, Keyboard, Permission};
 use anytools_core::{ConfigFile, CoreEvent, Context, Host, Module, OverlayCmd, Pt, Registry};
 use base64::Engine;
-use config::{Compiled, ItemDef, ItemKind, WheelId};
-use controller::{Cmd, Controller, Env};
+use config::{Compiled, ItemDef, ItemKind, WheelDef};
+use controller::{Cmd, Controller, Env, Level};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -17,11 +17,13 @@ use std::time::{Duration, Instant};
 
 /// Selection probes give up after this; the wheel then stays as resolved from the front app.
 const PROBE_TIMEOUT: Duration = Duration::from_millis(600);
+/// The copy fallback waits this long for the front app to put the selection on the clipboard.
+const TEXT_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 const FADE_EXEC_MS: u64 = 140;
 const FADE_CANCEL_MS: u64 = 90;
 
 enum Job {
-    Begin { seq: u64, needs_title: bool },
+    Begin { seq: u64, needs_title: bool, needs_text: bool },
     Exec { label: String, action: anytools_core::ActionSpec, ctx: Context, t0: Instant },
     Replay(anytools_core::Chord),
     Hidden { seq: u64, fade_ms: u64 },
@@ -48,18 +50,23 @@ impl WheelModule {
     }
 }
 
-fn wheel_payload(cfg: &Compiled, id: WheelId) -> Value {
-    let w = &cfg.wheels[id];
+/// `dynamic`: computed when opened (a menu action), so the page builds it on the spot.
+fn wheel_view(w: &WheelDef, dynamic: bool) -> Value {
     json!({
         "key": w.id,
         "name": w.name,
+        "dynamic": dynamic,
         "items": w.items.iter().map(|i| json!({
             "id": i.id,
             "label": i.label,
             "icon": i.icon,
-            "submenu": matches!(i.kind, ItemKind::Submenu(_)),
+            "submenu": i.kind.opens_submenu(),
         })).collect::<Vec<_>>(),
     })
+}
+
+fn level_view(cfg: &Compiled, l: &Level) -> Value {
+    wheel_view(l.def(cfg), matches!(l, Level::Menu(_)))
 }
 
 impl Inner {
@@ -74,10 +81,11 @@ impl Inner {
         let place = |p: Pt| geometry::place(&self.host.services.context.screens(), p);
         let reg = &self.host.registry;
         let avail = |it: &ItemDef, ctx: &Context| match &it.kind {
-            ItemKind::Action(a) => reg.available(a, ctx),
+            ItemKind::Action(a) | ItemKind::Menu(a) => reg.available(a, ctx),
             ItemKind::Submenu(_) => true,
         };
-        let env = Env { cfg: &cfg, place: &place, avail: &avail, esc_code: self.esc_code };
+        let menu = |a: &anytools_core::ActionSpec, ctx: &Context| reg.menu(a, ctx);
+        let env = Env { cfg: &cfg, place: &place, avail: &avail, menu: &menu, esc_code: self.esc_code };
         let mut out = Vec::new();
         {
             let mut ctl = self.ctl.lock().unwrap();
@@ -91,18 +99,19 @@ impl Inner {
     fn dispatch(&self, cmd: Cmd, cfg: &Compiled) {
         let ui = &self.host.ui;
         match cmd {
-            Cmd::Begin { seq, needs_title } => {
-                let _ = self.jobs.send(Job::Begin { seq, needs_title });
+            Cmd::Begin { seq, needs_title, needs_text } => {
+                let _ = self.jobs.send(Job::Begin { seq, needs_title, needs_text });
             }
             Cmd::Show { seq, t0, frame, wheel, disabled, click } => {
-                let n = cfg.wheels[wheel].items.len();
+                let n = wheel.def(cfg).items.len();
                 ui.overlay(OverlayCmd::Show {
                     session: seq,
                     frame,
                     shape: geometry::shape(n),
+                    channel: "wheel:show",
                     payload: json!({
                         "seq": seq,
-                        "wheel": wheel_payload(cfg, wheel),
+                        "wheel": level_view(cfg, &wheel),
                         "disabled": disabled,
                         "click": click,
                         "depth": 0,
@@ -116,8 +125,8 @@ impl Inner {
             }
             Cmd::Mode { seq, click } => ui.overlay_event("wheel:mode", json!({ "seq": seq, "click": click })),
             Cmd::Swap { seq, wheel, disabled, depth } => {
-                ui.overlay(OverlayCmd::Shape { session: seq, shape: geometry::shape(cfg.wheels[wheel].items.len()) });
-                ui.overlay_event("wheel:swap", json!({ "seq": seq, "wheel": wheel_payload(cfg, wheel), "disabled": disabled, "depth": depth }));
+                ui.overlay(OverlayCmd::Shape { session: seq, shape: geometry::shape(wheel.def(cfg).items.len()) });
+                ui.overlay_event("wheel:swap", json!({ "seq": seq, "wheel": level_view(cfg, &wheel), "disabled": disabled, "depth": depth }));
             }
             Cmd::Disabled { seq, disabled } => ui.overlay_event("wheel:disabled", json!({ "seq": seq, "disabled": disabled })),
             Cmd::Exec { seq, label, action, ctx, t0 } => {
@@ -157,7 +166,7 @@ impl Inner {
             };
             match job {
                 None => self.drive(|c, env, out| c.tick(Instant::now(), env, out)),
-                Some(Job::Begin { seq, needs_title }) => self.begin(seq, needs_title),
+                Some(Job::Begin { seq, needs_title, needs_text }) => self.begin(seq, needs_title, needs_text),
                 Some(Job::Exec { label, action, ctx, t0 }) => {
                     let me = self.clone();
                     // Actions may block (dialogs, scripts); never hold up the next wheel.
@@ -187,7 +196,7 @@ impl Inner {
         }
     }
 
-    fn begin(self: &Arc<Self>, seq: u64, needs_title: bool) {
+    fn begin(self: &Arc<Self>, seq: u64, needs_title: bool, needs_text: bool) {
         let ctxp = &self.host.services.context;
         let mut app = ctxp.frontmost();
         if !needs_title {
@@ -195,10 +204,13 @@ impl Inner {
                 a.title = None;
             }
         }
-        let probe = app.as_ref().is_some_and(|a| ctxp.has_file_provider(a));
+        let files = app.as_ref().is_some_and(|a| ctxp.has_file_provider(a));
+        // Reading selected text is only worth it if some rule uses it (it may briefly touch the clipboard).
+        let text = !files && needs_text && app.is_some();
         let a2 = app.clone();
-        self.drive(|c, env, out| c.resolved(seq, a2, probe, Instant::now(), env, out));
-        if let (true, Some(app)) = (probe, app) {
+        self.drive(|c, env, out| c.resolved(seq, a2, files || text, Instant::now(), env, out));
+        let Some(app) = app else { return };
+        if files {
             let me = self.clone();
             std::thread::spawn(move || {
                 let res = me.host.services.context.file_selection(&app, PROBE_TIMEOUT);
@@ -206,6 +218,15 @@ impl Inner {
                     tracing::info!(error = %e, "wheel: selection probe failed");
                 }
                 me.drive(|c, env, out| c.probed(seq, res.ok(), Instant::now(), env, out));
+            });
+        } else if text {
+            let me = self.clone();
+            std::thread::spawn(move || {
+                let res = me.host.services.context.text_selection(&app, TEXT_PROBE_TIMEOUT, true);
+                if let Err(e) = &res {
+                    tracing::info!(error = %e, "wheel: text probe failed");
+                }
+                me.drive(|c, env, out| c.probed_text(seq, res.map_err(|_| ()), Instant::now(), env, out));
             });
         }
     }
@@ -288,6 +309,10 @@ impl Module for WheelModule {
         }
     }
 
+    fn exclusive(&self) -> bool {
+        self.inner.get().is_some_and(|i| i.ctl.lock().unwrap().active_seq().is_some())
+    }
+
     fn on_input(&self, ev: &InputEvent, now: Instant) -> bool {
         let Some(inner) = self.inner.get() else { return false };
         // Cheap fast path: when idle, only trigger keys/buttons matter.
@@ -306,7 +331,7 @@ impl Module for WheelModule {
                 json!({
                     "geom": geometry::GEOM,
                     "fallback": cfg.wheels[cfg.fallback].id,
-                    "wheels": (0..cfg.wheels.len()).map(|i| wheel_payload(&cfg, i)).collect::<Vec<_>>(),
+                    "wheels": cfg.wheels.iter().map(|w| wheel_view(w, false)).collect::<Vec<_>>(),
                 })
             }
             Some("icons") => json!(inner.icons()),
@@ -315,7 +340,7 @@ impl Module for WheelModule {
                 let cfg = inner.cfg();
                 json!({
                     "geom": geometry::GEOM,
-                    "wheels": (0..cfg.wheels.len()).map(|i| wheel_payload(&cfg, i)).collect::<Vec<_>>(),
+                    "wheels": cfg.wheels.iter().map(|w| wheel_view(w, false)).collect::<Vec<_>>(),
                     "fallback": cfg.wheels[cfg.fallback].id,
                     "profiles": cfg.profiles.iter().map(|(_, w)| cfg.wheels[*w].id.clone()).collect::<Vec<_>>(),
                     "triggers": cfg.triggers.iter().map(|t| json!({

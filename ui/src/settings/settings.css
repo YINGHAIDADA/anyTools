@@ -417,3 +417,5 @@ textarea.code, .chord-text, .raw { font: 12px/1.5 ui-monospace, SFMono-Regular, 
 .split-row .chord { flex-wrap: wrap; }
 .split-row .chord-text, .field .chord-text { min-width: 0; flex: 1 1 140px; }
 .split-row > * { min-width: 0; }
+
+.wide-input { width: 280px; }

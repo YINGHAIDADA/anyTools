@@ -151,6 +151,7 @@ fn ctx_value<'js>(cx: &Ctx<'js>, ctx: &Context) -> rquickjs::Result<Value<'js>> 
     let json = serde_json::json!({
         "app": ctx.app.as_ref().map(|a| serde_json::json!({ "id": a.id, "name": a.name, "pid": a.pid, "title": a.title })),
         "selection": ctx.selection.files().iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
+        "text": match &ctx.selection { anytools_core::Selection::Text { text } => Some(text.as_str()), _ => None },
         "cwd": ctx.work_dir().map(|p| p.to_string_lossy().into_owned()),
         "platform": Platform::current(),
     });
@@ -225,6 +226,19 @@ fn install_api<'js>(
     keys.set(
         "type",
         Function::new(cx.clone(), move |cx: Ctx<'js>, text: String| -> rquickjs::Result<()> { kb.type_text(&text).map_err(|e| throw(&cx, e)) })?,
+    )?;
+    let (kb, f) = (s.keyboard.clone(), s.files.clone());
+    keys.set(
+        "paste",
+        Function::new(cx.clone(), move |cx: Ctx<'js>, text: String| -> rquickjs::Result<()> {
+            // Borrows the clipboard: marked transient (history skips it), restored afterwards.
+            let prev = f.clipboard_snapshot();
+            f.set_clipboard_text_transient(&text).map_err(|e| throw(&cx, e))?;
+            let v = parse_chord("mod+v", Platform::current()).map_err(|e| throw(&cx, e))?;
+            kb.send_chord(&v).map_err(|e| throw(&cx, e))?;
+            std::thread::sleep(Duration::from_millis(250));
+            f.clipboard_restore(&prev).map_err(|e| throw(&cx, e))
+        })?,
     )?;
     g.set("keys", keys)?;
 

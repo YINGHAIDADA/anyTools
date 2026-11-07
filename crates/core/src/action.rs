@@ -34,6 +34,15 @@ pub fn params<T: DeserializeOwned>(kind: &str, p: &Params) -> Result<T, String> 
     serde_json::from_value(Value::Object(p.clone())).map_err(|e| format!("动作 {kind} 的参数有误: {e}"))
 }
 
+/// One choice of a menu action (see [`ActionHandler::menu`]).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MenuItem {
+    pub label: String,
+    /// `lucide:Name`.
+    pub icon: String,
+    pub action: ActionSpec,
+}
+
 pub struct ActionCtx<'a> {
     pub context: &'a Context,
     pub services: &'a Services,
@@ -59,4 +68,12 @@ pub trait ActionHandler: Send + Sync {
     }
     /// Runs on a worker thread, after the trigger modifiers were released.
     fn run(&self, params: &Params, cx: &ActionCtx) -> Result<(), String>;
+    /// A menu action offers choices computed when it is opened (e.g. recent clipboard entries); the
+    /// wheel shows them as a submenu. `run` is then only used outside such a menu.
+    fn is_menu(&self) -> bool {
+        false
+    }
+    fn menu(&self, _params: &Params, _ctx: &Context) -> Vec<MenuItem> {
+        vec![]
+    }
 }

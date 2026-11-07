@@ -25,15 +25,21 @@ fn app() -> &'static Arc<App> {
     APP.get().expect("app initialised in setup")
 }
 
-/// Fans hook events out to modules; the first one that swallows wins.
+/// Fans hook events out to modules.
 struct ModuleFilter(Vec<Arc<dyn Module>>);
 
 impl InputFilter for ModuleFilter {
     fn handle(&self, ev: InputEvent, now: Instant) -> bool {
+        // While a module has a session open, presses and scrolling go to it alone (another module must
+        // not open on top). Releases, modifier changes and moves reach everyone, so state like "key
+        // released" stays consistent.
+        let presses = matches!(ev, InputEvent::KeyDown { .. } | InputEvent::Down { .. } | InputEvent::Scroll { .. });
+        let owner = if presses { self.0.iter().position(|m| m.exclusive()) } else { None };
         let mut swallow = false;
-        for m in &self.0 {
-            // Every module sees every event (so state like "key released" stays consistent).
-            swallow |= m.on_input(&ev, now);
+        for (i, m) in self.0.iter().enumerate() {
+            if owner.is_none_or(|o| o == i) {
+                swallow |= m.on_input(&ev, now);
+            }
         }
         swallow
     }
@@ -376,26 +382,58 @@ fn selftest(n: u32) {
         let c = a.services().context.cursor();
         // Where the wheel will actually be centered (pushed in from screen edges).
         let center = anytools_wheel::geometry::place(&a.services().context.screens(), c).center();
-        let swallowed = send(InputEvent::KeyDown { code: space, mods, repeat: false, at: c });
+        let swallowed = send(InputEvent::KeyDown { code: space, mods, repeat: false, at: c, ch: None });
         std::thread::sleep(Duration::from_millis(250));
         if i % 2 == 1 {
-            // Toward 6 o'clock and across the ring: "应用" (index 4 of 8) is a submenu.
+            // Toward the first submenu of the default wheel and across the ring.
+            let (k, n) = submenu_slot(&a.host);
+            let ang = (k as f64 / n as f64) * std::f64::consts::TAU;
             for r in [60.0, 120.0, 175.0] {
-                send(InputEvent::Move { at: anytools_core::Pt { x: center.x, y: center.y + r } });
+                send(InputEvent::Move { at: anytools_core::Pt { x: center.x + r * ang.sin(), y: center.y - r * ang.cos() } });
                 std::thread::sleep(Duration::from_millis(60));
             }
             std::thread::sleep(Duration::from_millis(250));
-            send(InputEvent::KeyDown { code: esc, mods: Default::default(), repeat: false, at: c });
+            send(InputEvent::KeyDown { code: esc, mods: Default::default(), repeat: false, at: c, ch: None });
             send(InputEvent::KeyUp { code: esc, mods: Default::default() });
             std::thread::sleep(Duration::from_millis(150));
         }
-        send(InputEvent::KeyDown { code: esc, mods: Default::default(), repeat: false, at: c });
+        send(InputEvent::KeyDown { code: esc, mods: Default::default(), repeat: false, at: c, ch: None });
         send(InputEvent::KeyUp { code: esc, mods: Default::default() });
         send(InputEvent::KeyUp { code: space, mods });
         tracing::info!(target: "metrics", round = i, swallowed, "selftest round");
         std::thread::sleep(Duration::from_millis(1500));
     }
+    // The clipboard panel: open with its shortcut, type a query, clear it with Esc, close with Esc.
+    let v = kb.code_of("v").unwrap();
+    let pmods = anytools_core::Mods::CTRL | if cfg!(target_os = "macos") { anytools_core::Mods::CMD } else { anytools_core::Mods::ALT };
+    let c = a.services().context.cursor();
+    let opened = send(InputEvent::KeyDown { code: v, mods: pmods, repeat: false, at: c, ch: Some('v') });
+    send(InputEvent::KeyUp { code: v, mods: pmods });
+    std::thread::sleep(Duration::from_millis(1200));
+    let a_key = kb.code_of("a").unwrap();
+    let typed = send(InputEvent::KeyDown { code: a_key, mods: Default::default(), repeat: false, at: c, ch: Some('a') });
+    send(InputEvent::KeyUp { code: a_key, mods: Default::default() });
+    // While the panel is open the wheel trigger must not open a wheel on top.
+    let wheel_blocked = send(InputEvent::KeyDown { code: space, mods, repeat: false, at: c, ch: None });
+    send(InputEvent::KeyUp { code: space, mods });
+    std::thread::sleep(Duration::from_millis(1200));
+    for _ in 0..2 {
+        send(InputEvent::KeyDown { code: esc, mods: Default::default(), repeat: false, at: c, ch: None });
+        send(InputEvent::KeyUp { code: esc, mods: Default::default() });
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    let still_open = a.modules.iter().any(|m| m.exclusive());
+    tracing::info!(target: "metrics", opened, typed, wheel_blocked, still_open, "selftest panel");
     tracing::info!(target: "metrics", "selftest done");
+}
+
+/// (index, count) of the first submenu item in the default wheel, for the selftest.
+fn submenu_slot(host: &Host) -> (usize, usize) {
+    let cfg = host.config.get();
+    let w = &cfg.module("wheel")["wheels"]["default"]["items"];
+    let items = w.as_array().cloned().unwrap_or_default();
+    let k = items.iter().position(|it| it["action"]["type"] == "submenu").unwrap_or(0);
+    (k, items.len().max(1))
 }
 
 #[cfg(target_os = "macos")]
@@ -470,15 +508,36 @@ clipboard.writeText(lines.join("\n"));
 ui.notify(`已复制 ${lines.length} 个文件的信息`);
 "#;
 
+const TEXT_UPPER_SCRIPT: &str = r#"// 把选中的文字换成大写（英文），直接替换原文。
+if (!context.text) return;
+keys.paste(context.text.toUpperCase());
+"#;
+
+const TEXT_COMPACT_SCRIPT: &str = r#"// 去掉选中文字里的空行和每行首尾空白，直接替换原文。
+if (!context.text) return;
+const out = context.text
+  .split(/\r?\n/)
+  .map((l: string) => l.trim())
+  .filter((l: string) => l.length > 0)
+  .join("\n");
+keys.paste(out);
+"#;
+
 /// Prepares `scripts/` (with the API typings and an example) and the consent flow.
 fn script_host(config_dir: &std::path::Path, services: &Services) -> anytools_script::ScriptHost {
     let dir = config_dir.join("scripts");
     let _ = std::fs::create_dir_all(&dir);
     // Always refresh the typings so they match this version.
     let _ = std::fs::write(dir.join("anytools.d.ts"), anytools_script::DTS);
-    let example = dir.join("example.ts");
-    if !example.exists() {
-        let _ = std::fs::write(example, EXAMPLE_SCRIPT);
+    // Bundled scripts: written once, then they belong to the user (never overwritten).
+    for (name, body) in [("example.ts", EXAMPLE_SCRIPT), ("text/upper.ts", TEXT_UPPER_SCRIPT), ("text/compact.ts", TEXT_COMPACT_SCRIPT)] {
+        let p = dir.join(name);
+        if !p.exists() {
+            if let Some(parent) = p.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(p, body);
+        }
     }
     let shell = services.shell.clone();
     anytools_script::ScriptHost {
@@ -513,7 +572,10 @@ fn setup(app_handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     registry.register(Arc::new(anytools_script::ScriptAction { host: script_host(&config_dir, &services) }));
     let _ = SCRIPTS_DIR.set(config_dir.join("scripts"));
 
-    let modules: Vec<Arc<dyn Module>> = vec![Arc::new(anytools_wheel::WheelModule::new(services.keyboard.clone()))];
+    let modules: Vec<Arc<dyn Module>> = vec![
+        Arc::new(anytools_wheel::WheelModule::new(services.keyboard.clone())),
+        Arc::new(anytools_clipboard::ClipboardModule::new(services.keyboard.clone())),
+    ];
     for m in &modules {
         m.register_actions(&registry);
         let (m2, reg) = (m.clone(), registry.clone());
@@ -635,6 +697,23 @@ mod tests {
     use super::*;
     use anytools_core::{ConfigFile, Platform};
 
+    /// Every action the app registers (built-ins and modules').
+    fn test_registry() -> Registry {
+        let reg = Registry::default();
+        anytools_actions::register_all(&reg);
+        let kb: Arc<dyn anytools_core::platform::Keyboard> = Arc::new(anytools_platform::mock::Mock::new());
+        anytools_clipboard::ClipboardModule::new(kb).register_actions(&reg);
+        let dir = std::env::temp_dir().join("anytools-test-scripts");
+        reg.register(Arc::new(anytools_script::ScriptAction {
+            host: anytools_script::ScriptHost {
+                scripts_dir: dir.clone(),
+                grants: Arc::new(anytools_script::perms::Grants::load(dir.join("grants.json"))),
+                consent: Arc::new(|_, _| false),
+            },
+        }));
+        reg
+    }
+
     /// The config users get on first run must be valid on every platform.
     /// What the settings editor does: load the config as JSON, edit it, send it back. The JSON
     /// round trip must be lossless, or saving from the editor would silently change the config.
@@ -652,12 +731,11 @@ mod tests {
         edited["modules"]["wheel"]["wheels"]["default"]["items"][0]["label"] = serde_json::json!("复制（改）");
         edited["modules"]["wheel"]["profiles"].as_array_mut().unwrap().push(serde_json::json!({ "when": { "app": "com.apple.Safari" }, "wheel": "browser" }));
         let e: ConfigFile = serde_json::from_value(edited).unwrap();
-        let reg = Registry::default();
-        anytools_actions::register_all(&reg);
+        let reg = test_registry();
         let kb = anytools_platform::mock::Mock::new();
         let c = anytools_wheel::config::compile_for(&e.module("wheel"), &reg, &kb, Platform::Mac).unwrap();
         assert_eq!(c.wheels[c.fallback].items[0].label, "复制（改）");
-        assert_eq!(c.profiles.len(), 5);
+        assert_eq!(c.profiles.len(), cfg.module("wheel")["profiles"].as_array().unwrap().len() + 1);
     }
 
     /// `cargo test -p anytools dump_default_config -- --ignored` writes the default config as the
@@ -674,9 +752,10 @@ mod tests {
     #[test]
     fn default_config_is_valid() {
         let cfg = ConfigFile::parse(DEFAULT_CONFIG).unwrap();
-        let reg = Registry::default();
-        anytools_actions::register_all(&reg);
+        let reg = test_registry();
         let kb = anytools_platform::mock::Mock::new();
+        let clip = anytools_clipboard::ClipboardModule::new(Arc::new(kb.clone()));
+        clip.validate(&cfg, &reg).expect("clipboard section valid");
         for p in [Platform::Mac, Platform::Win] {
             let c = anytools_wheel::config::compile_for(&cfg.module("wheel"), &reg, &kb, p)
                 .unwrap_or_else(|e| panic!("default config invalid on {p:?}: {e}"));

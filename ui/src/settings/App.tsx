@@ -3,13 +3,14 @@ import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useState } from 'react';
 import type { Geom, PermState, Status, WheelView } from '../shared/types';
 import type { FieldEnv } from './fields';
+import { ClipboardPage } from './ClipboardPage';
 import { Icon } from './Icon';
 import type { Platform, WheelModuleCfg } from './model';
 import { RulesEditor, TriggersEditor } from './RulesEditor';
 import { useDraft, type Draft } from './useDraft';
 import { WheelEditor } from './WheelEditor';
 
-type Page = 'general' | 'wheels' | 'rules' | 'config' | 'about';
+type Page = 'general' | 'wheels' | 'rules' | 'clipboard' | 'config' | 'about';
 
 interface Overview {
   geom: Geom;
@@ -23,6 +24,7 @@ const PAGES: { id: Page; label: string; icon: string }[] = [
   { id: 'general', label: '通用', icon: 'Settings2' },
   { id: 'wheels', label: '轮盘', icon: 'Disc3' },
   { id: 'rules', label: '唤起与规则', icon: 'Filter' },
+  { id: 'clipboard', label: '剪贴板', icon: 'ClipboardList' },
   { id: 'config', label: '配置与脚本', icon: 'FileCode2' },
   { id: 'about', label: '关于', icon: 'Info' },
 ];
@@ -71,7 +73,7 @@ export function App() {
     wheels: Object.entries(wheelCfg?.wheels ?? {}).map(([k, w]) => ({ key: k, name: w.name ?? k })),
     scripts,
   };
-  const editing = page === 'wheels' || page === 'rules' || page === 'general';
+  const editing = page === 'wheels' || page === 'rules' || page === 'general' || page === 'clipboard';
 
   return (
     <div className="app">
@@ -87,7 +89,7 @@ export function App() {
               <span>{p.label}</span>
               {p.id === 'general' && needsSetup && <i className="dot warn" />}
               {p.id === 'config' && status?.config_error && <i className="dot bad" />}
-              {(p.id === 'wheels' || p.id === 'rules') && draft.dirty && <i className="dot accent" title="有未保存的修改" />}
+              {(p.id === 'wheels' || p.id === 'rules' || p.id === 'clipboard') && draft.dirty && <i className="dot accent" title="有未保存的修改" />}
             </button>
           ))}
         </nav>
@@ -118,6 +120,8 @@ export function App() {
           ) : (
             <div className="loading">加载中…</div>
           )
+        ) : page === 'clipboard' ? (
+          draft.cfg ? <ClipboardPage draft={draft} platform={platform} /> : <div className="loading">加载中…</div>
         ) : page === 'config' ? (
           <Config status={status} draft={draft} scripts={scripts} />
         ) : (

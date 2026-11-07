@@ -37,13 +37,18 @@ impl Button {
 /// [`Keyboard::code_of`] to translate key names.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InputEvent {
-    KeyDown { code: u32, mods: Mods, repeat: bool, at: Pt },
+    /// `ch`: the character the key types with the current layout and modifiers (before any input
+    /// method), if it types a printable one.
+    KeyDown { code: u32, mods: Mods, repeat: bool, at: Pt, ch: Option<char> },
     KeyUp { code: u32, mods: Mods },
     /// Modifier state changed (no other key involved).
     Flags { mods: Mods },
     Move { at: Pt },
     Down { button: Button, at: Pt },
     Up { button: Button },
+    /// Vertical scroll; positive = toward the top of the content (as `NSEvent.scrollingDeltaY`).
+    /// `precise` (trackpad): `dy` is in points; otherwise in lines (mouse wheel notches).
+    Scroll { dy: f64, precise: bool, at: Pt },
 }
 
 /// Called on the hook thread for every event. Return `true` to swallow it. Must be fast (well under
@@ -84,7 +89,13 @@ pub trait ContextProbe: Send + Sync {
     /// Reads the selected files and current folder of a file manager. Blocking; gives up after
     /// `timeout`.
     fn file_selection(&self, app: &AppInfo, timeout: Duration) -> Result<FileSelection, String>;
+    /// The text selected in the front app, if any. Blocking; gives up after `timeout`.
+    /// `allow_copy`: may fall back to simulating ⌘C / Ctrl+C (the clipboard is restored afterwards).
+    fn text_selection(&self, app: &AppInfo, timeout: Duration, allow_copy: bool) -> Result<Option<String>, String>;
 }
+
+/// A snapshot of the whole clipboard (every item, every type), to restore it byte-for-byte.
+pub type ClipboardSnapshot = Vec<Vec<(String, Vec<u8>)>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -133,6 +144,29 @@ pub trait FileOps: Send + Sync {
     fn clipboard_text(&self) -> Option<String>;
     /// Creates `dest` (a .zip) from `paths`, stored relative to `base`.
     fn zip(&self, base: &Path, paths: &[PathBuf], dest: &Path) -> Result<(), String>;
+    /// Increments whenever any app changes the clipboard. Cheap; used to poll for changes.
+    fn clipboard_change_count(&self) -> i64;
+    /// The current clipboard text, unless the copying app marked it as sensitive or transient
+    /// (password managers do), in which case `Ok(None)`.
+    fn clipboard_text_for_history(&self) -> Option<String>;
+    fn clipboard_snapshot(&self) -> ClipboardSnapshot;
+    /// Puts a snapshot back. The resulting change is reported by [`FileOps::clipboard_restored_at`].
+    fn clipboard_restore(&self, snap: &ClipboardSnapshot) -> Result<(), String>;
+    /// The change count right after the last [`FileOps::clipboard_restore`] (`-1`: none yet). Clipboard
+    /// history skips that change: it only puts back what was there before.
+    fn clipboard_restored_at(&self) -> i64 {
+        -1
+    }
+    /// True while anyTools itself is borrowing the clipboard (reading a selection with ⌘C); changes
+    /// seen meanwhile are not the user's.
+    fn clipboard_busy(&self) -> bool {
+        false
+    }
+    /// Writes text that is only on the clipboard to be pasted right away; marked so clipboard
+    /// history tools (ours included) don't record it.
+    fn set_clipboard_text_transient(&self, text: &str) -> Result<(), String> {
+        self.set_clipboard_text(text)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
