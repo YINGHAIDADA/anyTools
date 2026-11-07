@@ -89,6 +89,7 @@ impl App {
             "platform": anytools_core::Platform::current(),
             "hook": s.input.running(),
             "secure_input": secure_input,
+            "liquid_glass": liquid_glass_available(),
             "permissions": perms,
             "config_path": self.host.config.path().display().to_string(),
             "config_error": self.host.config.last_error(),
@@ -405,10 +406,21 @@ fn apply_overlay_look(app: &AppHandle, s: &anytools_core::Settings) {
         anytools_core::config::Theme::Auto => "auto",
     };
     let material = s.material.clone();
+    let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
-        anytools_platform::macos::overlay::set_material(&material);
+        let liquid = anytools_platform::macos::overlay::set_material(&material);
         anytools_platform::macos::overlay::set_theme(theme);
+        // The page draws lighter sectors and skips its own rim highlight when real glass is underneath.
+        use tauri::Emitter;
+        let _ = app2.emit_to(OVERLAY, "overlay:glass", json!({ "liquid": liquid }));
     });
+}
+
+fn liquid_glass_available() -> bool {
+    #[cfg(target_os = "macos")]
+    return anytools_platform::macos::overlay::liquid_glass_available();
+    #[cfg(not(target_os = "macos"))]
+    false
 }
 
 fn report(r: Result<(), String>) {

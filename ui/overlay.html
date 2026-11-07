@@ -6,15 +6,19 @@
   </head>
   <body>
     <div id="stage">
-      <div id="glow" class="glow">
-        <div class="glow-ring"></div>
-        <div class="glow-ring glow-bloom"></div>
-      </div>
-      <svg id="wheel" viewBox="0 0 420 420" width="420" height="420" aria-hidden="true"></svg>
-      <div id="center">
-        <div id="center-icon"></div>
-        <div id="center-label"></div>
-        <div id="center-hint"></div>
+      <div id="wheel-wrap">
+        <svg id="wheel" viewBox="0 0 420 420" width="420" height="420" aria-hidden="true"></svg>
+        <div id="glow" class="glow">
+          <div class="glow-ring"></div>
+          <div class="glow-ring glow-bloom"></div>
+        </div>
+        <canvas id="light" width="420" height="420"></canvas>
+        <svg id="wheel-fg" viewBox="0 0 420 420" width="420" height="420" aria-hidden="true"></svg>
+        <div id="center">
+          <div id="center-icon"></div>
+          <div id="center-label"></div>
+          <div id="center-hint"></div>
+        </div>
       </div>
     </div>
     <script type="module" src="/src/overlay/main.ts"></script>

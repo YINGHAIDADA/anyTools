@@ -13,11 +13,15 @@ import { listen } from '@tauri-apps/api/event';
 import { sectorPath, polar } from '../shared/geometry';
 import { iconElement, lucideSvg } from '../shared/icons';
 import type { Geom, Settings, Snapshot, WheelView } from '../shared/types';
+import { createLight, palette, type LightRenderer, type LightState } from './light';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const $ = <T extends Element = HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
 const stage = $('stage');
+// Layers, bottom to top: sector bodies (svg) → light (WebGL) → icons/labels (svgFg) → center text.
 const svg = $<SVGSVGElement>('wheel');
+const svgFg = $<SVGSVGElement>('wheel-fg');
+const lightCanvas = $<HTMLCanvasElement>('light');
 const glow = $('glow');
 const centerIcon = $('center-icon');
 const centerLabel = $('center-label');
@@ -26,6 +30,7 @@ const centerHint = $('center-hint');
 interface Built {
   view: WheelView;
   root: SVGGElement;
+  fg: SVGGElement;
   sectors: SVGPathElement[];
   icons: SVGGElement[];
   labels: SVGTextElement[];
@@ -51,6 +56,76 @@ let cur: Session | null = null;
 let appIcons: Record<string, string> = {};
 let pendingRebuild = false;
 
+// Light layer state. h0 = hovered sector (fades in, light pours in from the rim), h1 = the previous one
+// fading out.
+let light: LightRenderer | null = null;
+const lt = {
+  h0: -1,
+  h0Since: 0,
+  h1: -1,
+  h1Since: 0,
+  flashAt: -1,
+  cursorAngle: 0,
+  cursorDist: 0,
+  liquid: false,
+  glassAvailable: false,
+  light: false,
+  palette: palette(undefined),
+  reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+};
+const FADE_IN = 220;
+const FADE_OUT = 260;
+const FLASH = 220;
+
+function lightState(now: number): LightState {
+  const n = cache.get(cur?.key ?? attached ?? '')?.view.items.length ?? 8;
+  const ease = (x: number) => 1 - Math.pow(1 - Math.min(Math.max(x, 0), 1), 3);
+  return {
+    n,
+    h0: lt.h0,
+    h0Amount: lt.h0 >= 0 ? ease((now - lt.h0Since) / FADE_IN) : 0,
+    h0Age: (now - lt.h0Since) / 1000,
+    h1: lt.h1,
+    h1Amount: lt.h1 >= 0 ? 1 - ease((now - lt.h1Since) / FADE_OUT) : 0,
+    flash: lt.flashAt >= 0 ? Math.max(0, 1 - (now - lt.flashAt) / FLASH) : 0,
+    light: lt.light,
+    palette: lt.palette,
+    // Reduced motion: the light still fades and pours in, but stops flowing.
+    time: lt.reducedMotion ? 0 : now / 1000,
+  };
+}
+
+function drawLight(now = performance.now()): void {
+  if (!light) return;
+  try {
+    light.draw(lightState(now));
+  } catch (e) {
+    report(e);
+    disableLight();
+  }
+}
+
+function disableLight(): void {
+  light = null;
+  document.documentElement.classList.remove('gl');
+}
+
+/** Moves the light to sector `idx` (or none). The old one fades out. */
+function lightHover(idx: number | null): void {
+  const next = idx ?? -1;
+  if (next === lt.h0) return;
+  const now = performance.now();
+  lt.h1 = lt.h0;
+  lt.h1Since = now;
+  lt.h0 = next;
+  lt.h0Since = now;
+}
+
+function lightReset(): void {
+  lt.h0 = lt.h1 = -1;
+  lt.flashAt = -1;
+}
+
 // ------------------------------------------------------------------------------------------------
 // Building (startup / config change only)
 // ------------------------------------------------------------------------------------------------
@@ -62,30 +137,8 @@ function el<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, 
   return e;
 }
 
-/** Static grain texture rendered once (a live feTurbulence filter is expensive to rasterize). */
-function noiseDataUrl(size = 160): string {
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const ctx = c.getContext('2d')!;
-  const img = ctx.createImageData(size, size);
-  for (let i = 0; i < img.data.length; i += 4) {
-    const v = (Math.random() * 255) | 0;
-    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-    img.data[i + 3] = 255;
-  }
-  ctx.putImageData(img, 0, 0);
-  return c.toDataURL('image/png');
-}
-
 function buildDefs(): SVGDefsElement {
-  const d = el('defs', {}, svg);
-  const hl = el('linearGradient', { id: 'hl', x1: 0, y1: 0, x2: 0, y2: 1 }, d);
-  el('stop', { offset: '0%', class: 'hl-top' }, hl);
-  el('stop', { offset: '55%', class: 'hl-mid' }, hl);
-  el('stop', { offset: '100%', class: 'hl-bottom' }, hl);
-  const pat = el('pattern', { id: 'grain', width: 160, height: 160, patternUnits: 'userSpaceOnUse' }, d);
-  el('image', { href: noiseDataUrl(), width: 160, height: 160 }, pat);
-  return d;
+  return el('defs', {}, svg);
 }
 
 function maskFor(i: number, n: number, g: Geom): string {
@@ -97,42 +150,46 @@ function short(label: string): string {
   return [...label].length > 6 ? [...label].slice(0, 6).join('') + '…' : label;
 }
 
-function buildWheel(view: WheelView, g: Geom, d: SVGDefsElement): Built {
+function buildWheel(view: WheelView, g: Geom, _defs: SVGDefsElement): Built {
   const n = view.items.length;
   const c = g.win / 2;
   const root = el('g', { class: 'wheel-root' });
-  const clipId = `clip-${CSS.escape(view.key)}`;
-  const clip = el('clipPath', { id: clipId }, d);
+  const fg = el('g', { class: 'wheel-fg' });
   const sectors: SVGPathElement[] = [];
   const icons: SVGGElement[] = [];
   const labels: SVGTextElement[] = [];
   view.items.forEach((_, i) => {
-    const p = sectorPath(i, n, g);
-    el('path', { d: p }, clip);
-    sectors.push(el('path', { d: p, class: 'sector' }, root));
-    el('path', { d: p, class: 'sector-hl' }, root);
+    sectors.push(el('path', { d: sectorPath(i, n, g), class: 'sector' }, root));
   });
-  el('circle', { cx: c, cy: c, r: g.r_center }, clip);
   el('circle', { cx: c, cy: c, r: g.r_center, class: 'center-disc' }, root);
-  el('circle', { cx: c, cy: c, r: g.r_center - 0.5, class: 'center-hl' }, root);
-  el('rect', { x: 0, y: 0, width: g.win, height: g.win, fill: 'url(#grain)', 'clip-path': `url(#${clipId})`, class: 'noise' }, root);
+  // On a single Liquid Glass disc, hairlines are all that separate the sectors (hidden on classic glass,
+  // which is already cut to the sector shapes). Inset from both rings so they read as dividers, not a grid.
+  for (let i = 0; i < n; i++) {
+    const a = ((i + 0.5) * Math.PI * 2) / n;
+    const [r0, r1] = [g.r_in + 10, g.r_out - 12];
+    el('line', { x1: c + r0 * Math.sin(a), y1: c - r0 * Math.cos(a), x2: c + r1 * Math.sin(a), y2: c - r1 * Math.cos(a), class: 'divider' }, root);
+  }
+  el('circle', { cx: c, cy: c, r: (g.r_in + g.r_center) / 2, class: 'divider' }, root);
 
   view.items.forEach((item, i) => {
     const [x, y] = polar(i, n, g);
-    const ig = el('g', { class: 'item-icon', transform: `translate(${(x - 11).toFixed(2)} ${(y - 17).toFixed(2)})` }, root);
+    // Position on an outer group (SVG attribute), hover scale on an inner one (CSS). A CSS `transform`
+    // replaces the SVG `transform` attribute rather than composing with it, so they can't share a node.
+    const pos = el('g', { transform: `translate(${(x - 11).toFixed(2)} ${(y - 17).toFixed(2)})` }, fg);
+    const ig = el('g', { class: 'item-icon' }, pos);
     ig.appendChild(iconElement(item.icon, 22, appIcons));
     icons.push(ig);
-    const t = el('text', { x: x.toFixed(2), y: (y + 18).toFixed(2), class: 'item-label' }, root);
+    const t = el('text', { x: x.toFixed(2), y: (y + 18).toFixed(2), class: 'item-label' }, fg);
     t.textContent = short(item.label);
     labels.push(t);
     if (item.submenu) {
       // A small chevron at the outer edge marks submenus.
       const [cx, cy] = polar(i, n, g, g.r_out - 9);
       const a = (i * 360) / n;
-      el('path', { d: 'M-3,1.5 L0,-1.5 L3,1.5', class: 'submenu-mark', transform: `translate(${cx.toFixed(2)} ${cy.toFixed(2)}) rotate(${a})` }, root);
+      el('path', { d: 'M-3,1.5 L0,-1.5 L3,1.5', class: 'submenu-mark', transform: `translate(${cx.toFixed(2)} ${cy.toFixed(2)}) rotate(${a})` }, fg);
     }
   });
-  return { view, root, sectors, icons, labels, masks: view.items.map((_, i) => maskFor(i, n, g)) };
+  return { view, root, fg, sectors, icons, labels, masks: view.items.map((_, i) => maskFor(i, n, g)) };
 }
 
 async function loadSnapshot(): Promise<void> {
@@ -141,10 +198,22 @@ async function loadSnapshot(): Promise<void> {
   geom = snap.geom;
   fallback = snap.fallback;
   svg.replaceChildren();
+  svgFg.replaceChildren();
   attached = null;
   cache.clear();
   defs = buildDefs();
   for (const v of snap.wheels) cache.set(v.key, buildWheel(v, geom, defs));
+  if (!light && !document.documentElement.classList.contains('nogl')) {
+    try {
+      light = createLight(lightCanvas, geom);
+    } catch (e) {
+      report(e);
+      light = null;
+    }
+    document.documentElement.classList.toggle('gl', !!light);
+    document.documentElement.classList.toggle('nogl', !light);
+    lightCanvas.addEventListener('webglcontextlost', (ev) => (ev.preventDefault(), disableLight()));
+  }
 }
 
 function refreshAppIcons(): void {
@@ -163,8 +232,13 @@ function attach(key: string): Built | undefined {
   const w = cache.get(key);
   if (!w) return undefined;
   if (attached !== key) {
-    if (attached !== null) cache.get(attached)?.root.remove();
+    if (attached !== null) {
+      const old = cache.get(attached);
+      old?.root.remove();
+      old?.fg.remove();
+    }
     svg.appendChild(w.root);
+    svgFg.appendChild(w.fg);
     attached = key;
   }
   return w;
@@ -172,10 +246,12 @@ function attach(key: string): Built | undefined {
 
 function resetVisual(w: Built | undefined): void {
   if (w) {
-    for (const e of w.root.querySelectorAll('.hover, .flash, .disabled')) e.classList.remove('hover', 'flash', 'disabled');
-    for (const s of w.sectors) s.style.transform = '';
+    for (const root of [w.root, w.fg]) {
+      for (const e of root.querySelectorAll('.hover, .flash, .disabled')) e.classList.remove('hover', 'flash', 'disabled');
+    }
   }
   glow.classList.remove('on');
+  lightReset();
 }
 
 function applyDisabled(w: Built, disabled: boolean[]): void {
@@ -222,7 +298,6 @@ function applyHover(idx: number | null): void {
   cur.hover = idx;
   if (prev !== null && w.sectors[prev]) {
     w.sectors[prev].classList.remove('hover');
-    w.sectors[prev].style.transform = '';
     w.icons[prev].classList.remove('hover');
     w.labels[prev].classList.remove('hover');
   }
@@ -233,13 +308,14 @@ function applyHover(idx: number | null): void {
     w.sectors[idx].classList.add('hover');
     w.icons[idx].classList.add('hover');
     w.labels[idx].classList.add('hover');
-    if (on) {
-      w.sectors[idx].style.transform = `translate(${(4 * Math.sin(a)).toFixed(2)}px, ${(-4 * Math.cos(a)).toFixed(2)}px)`;
+    if (on && !light) {
+      // CSS fallback glow (no WebGL).
       glow.style.setProperty('--mask', w.masks[idx]);
       glow.style.setProperty('--angle-base', `${(a * 180) / Math.PI - 60}deg`);
     }
   }
-  glow.classList.toggle('on', on);
+  glow.classList.toggle('on', on && !light);
+  lightHover(on ? idx : null);
   setCenter();
 }
 
@@ -257,6 +333,8 @@ function arm(): void {
   }
   void stage.offsetWidth;
   stage.classList.remove('no-anim');
+  // The armed frame must already show the glass highlights.
+  drawLight();
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -269,6 +347,7 @@ function loop(ts: number): void {
   if (!frames.running) return;
   if (frames.last) frames.deltas.push(ts - frames.last);
   frames.last = ts;
+  drawLight(ts);
   requestAnimationFrame(loop);
 }
 
@@ -330,8 +409,11 @@ void listen<ShowPayload>('wheel:show', ({ payload: p }) => {
   );
 });
 
-void listen<{ seq: number; idx: number | null }>('wheel:hover', ({ payload }) => {
-  if (cur?.seq === payload.seq) applyHover(payload.idx);
+void listen<{ seq: number; idx: number | null; angle: number; dist: number }>('wheel:hover', ({ payload }) => {
+  if (cur?.seq !== payload.seq) return;
+  lt.cursorAngle = (payload.angle * Math.PI) / 180;
+  lt.cursorDist = payload.dist;
+  applyHover(payload.idx);
 });
 
 void listen<{ seq: number; click: boolean }>('wheel:mode', ({ payload }) => {
@@ -376,7 +458,10 @@ void listen<{ seq: number; wheel: WheelView; disabled: boolean[]; depth: number 
 
 void listen<{ seq: number; flash: boolean }>('wheel:hide', ({ payload }) => {
   if (cur?.seq !== payload.seq) return;
-  if (payload.flash && cur.hover !== null) cache.get(cur.key)?.sectors[cur.hover]?.classList.add('flash');
+  if (payload.flash && cur.hover !== null) {
+    cache.get(cur.key)?.sectors[cur.hover]?.classList.add('flash');
+    lt.flashAt = performance.now();
+  }
   const { seq, hz } = cur;
   setTimeout(() => stopFrames(seq, hz), 100);
 });
@@ -412,10 +497,19 @@ void listen('wheel:config', async () => {
 const mq = window.matchMedia('(prefers-color-scheme: light)');
 let settings: Settings | null = null;
 
+function setLiquid(on: boolean): void {
+  lt.liquid = on;
+  document.documentElement.classList.toggle('liquid', on);
+}
+
 function applySettings(s: Settings): void {
   settings = s;
-  const light = s.theme === 'light' || (s.theme === 'auto' && mq.matches);
-  document.documentElement.classList.toggle('light', light);
+  const isLight = s.theme === 'light' || (s.theme === 'auto' && mq.matches);
+  document.documentElement.classList.toggle('light', isLight);
+  lt.light = isLight;
+  lt.palette = palette(s.accent);
+  // Native Liquid Glass is used when the material asks for it and the system has it.
+  setLiquid(lt.glassAvailable && s.material.startsWith('liquid'));
   const custom = s.accent && s.accent !== 'system' && CSS.supports('color', s.accent);
   if (custom) {
     document.documentElement.style.setProperty('--accent-a', s.accent);
@@ -424,10 +518,16 @@ function applySettings(s: Settings): void {
   } else {
     for (const v of ['--accent-a', '--accent-b', '--accent-c']) document.documentElement.style.removeProperty(v);
   }
+  if (cur === null) drawLight();
 }
 
 mq.addEventListener('change', () => settings && applySettings(settings));
 void listen<Settings>('settings', ({ payload }) => applySettings(payload));
+// The native side says what it actually used (authoritative over the guess from settings).
+void listen<{ liquid: boolean }>('overlay:glass', ({ payload }) => {
+  setLiquid(payload.liquid);
+  if (cur === null) drawLight();
+});
 
 // ------------------------------------------------------------------------------------------------
 
@@ -440,7 +540,8 @@ window.addEventListener('unhandledrejection', (ev) => report(ev.reason));
 
 (async () => {
   try {
-    const st = await invoke<{ settings: Settings }>('status');
+    const st = await invoke<{ settings: Settings; liquid_glass?: boolean }>('status');
+    lt.glassAvailable = !!st.liquid_glass;
     applySettings(st.settings);
     // The wheel module may still be starting; retry briefly.
     for (let i = 0; ; i++) {

@@ -7,8 +7,9 @@ settings:
   accent: system
   # 「在此打开终端」用的终端：应用名或 bundle id，如 iTerm、Warp、com.mitchellh.ghostty
   terminal: { mac: com.apple.Terminal, win: wt.exe }
-  # 毛玻璃材质：hud | popover | menu | sidebar | fullscreen-ui | under-window
-  material: hud
+  # 玻璃材质：liquid（液态玻璃，macOS 26+）| liquid-clear（更通透的液态玻璃）| hud | popover | menu | sidebar | fullscreen-ui | under-window
+  # 系统不支持液态玻璃时自动用 hud
+  material: liquid
 
 modules:
   wheel:

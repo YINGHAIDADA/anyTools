@@ -44,6 +44,8 @@ export interface Status {
   platform: 'mac' | 'win' | 'other';
   hook: boolean;
   secure_input: boolean;
+  /** macOS 26+ Liquid Glass is available. */
+  liquid_glass: boolean;
   permissions: Record<'accessibility' | 'automation_finder', PermState>;
   config_path: string;
   config_error: string | null;

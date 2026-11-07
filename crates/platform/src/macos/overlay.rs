@@ -13,9 +13,9 @@ use objc2::runtime::{AnyObject, Bool};
 use objc2::{msg_send, sel, MainThreadMarker};
 use objc2_app_kit::{
     NSAnimatablePropertyContainer, NSAnimationContext, NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua,
-    NSAutoresizingMaskOptions, NSBezierPath, NSColor, NSImage, NSPopUpMenuWindowLevel, NSScreen, NSVisualEffectBlendingMode,
-    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowCollectionBehavior,
-    NSWindowOrderingMode,
+    NSAutoresizingMaskOptions, NSBezierPath, NSColor, NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSPopUpMenuWindowLevel,
+    NSScreen, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
+    NSWindowCollectionBehavior, NSWindowOrderingMode,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use serde::Deserialize;
@@ -30,14 +30,44 @@ pub struct Shape {
     pub polys: Vec<Vec<[f64; 2]>>,
     #[serde(default)]
     pub circles: Vec<[f64; 3]>,
+    /// `[cx, cy, r]`: the disc the liquid glass covers (it can only be a circle or rounded rect).
+    #[serde(default)]
+    pub disc: Option<[f64; 3]>,
 }
 
 struct Overlay {
     window: Retained<NSWindow>,
     effect: Retained<NSVisualEffectView>,
+    /// macOS 26+ Liquid Glass (real refraction of what's behind). `None` on older systems.
+    glass: Option<Retained<NSGlassEffectView>>,
+    liquid: bool,
     shape: Shape,
     session: u64,
     primary_h: f64,
+}
+
+/// Whether this macOS has Liquid Glass (`NSGlassEffectView`, macOS 26+). Checked at runtime: calling the
+/// typed binding on an older system would abort on the missing class.
+pub fn liquid_glass_available() -> bool {
+    objc2::runtime::AnyClass::get(c"NSGlassEffectView").is_some()
+}
+
+fn is_liquid(material: &str) -> bool {
+    material.starts_with("liquid")
+}
+
+fn glass_style(material: &str) -> NSGlassEffectViewStyle {
+    if material == "liquid-clear" {
+        NSGlassEffectViewStyle::Clear
+    } else {
+        NSGlassEffectViewStyle::Regular
+    }
+}
+
+fn disc_rect(d: [f64; 3], win_h: f64) -> NSRect {
+    let [cx, cy, r] = d;
+    // AppKit views are y-up; the shape is y-down.
+    NSRect::new(NSPoint::new(cx - r, win_h - cy - r), NSSize::new(2.0 * r, 2.0 * r))
 }
 
 thread_local! {
@@ -132,14 +162,54 @@ pub fn setup(mtm: MainThreadMarker, ns_window: *mut c_void, wkwebview: *mut c_vo
     effect.setMaskImage(Some(&mask_image(&Shape { size: [1.0, 1.0], ..Default::default() })));
     content.addSubview_positioned_relativeTo(&effect, NSWindowOrderingMode::Below, None);
 
+    // Liquid Glass sits below the webview too (above the classic effect view, which it replaces).
+    let glass = liquid_glass_available().then(|| {
+        let g = NSGlassEffectView::initWithFrame(mtm.alloc(), NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0)));
+        g.setStyle(glass_style(material_name));
+        g.setHidden(true);
+        content.addSubview_positioned_relativeTo(&g, NSWindowOrderingMode::Above, Some(&effect));
+        g
+    });
+
     let occlusion_spi = disable_occlusion_detection(wkwebview);
     window.setAlphaValue(0.0);
     window.orderFrontRegardless();
 
     let primary_h = NSScreen::screens(mtm).iter().next().map(|s| s.frame().size.height).unwrap_or(900.0);
-    OVERLAY.with(|o| *o.borrow_mut() = Some(Overlay { window, effect, shape: Shape::default(), session: 0, primary_h }));
+    let mut ov = Overlay { window, effect, glass, liquid: false, shape: Shape::default(), session: 0, primary_h };
+    apply_material(&mut ov, material_name);
+    OVERLAY.with(|o| *o.borrow_mut() = Some(ov));
     refresh_screens(mtm);
     Ok(occlusion_spi)
+}
+
+/// Switches between Liquid Glass and the classic effect view. Returns whether Liquid Glass is in use.
+fn apply_material(ov: &mut Overlay, name: &str) -> bool {
+    ov.liquid = is_liquid(name) && ov.glass.is_some();
+    match (&ov.glass, ov.liquid) {
+        (Some(g), true) => {
+            g.setStyle(glass_style(name));
+            g.setHidden(false);
+            ov.effect.setHidden(true);
+            layout_glass(ov);
+        }
+        (g, _) => {
+            if let Some(g) = g {
+                g.setHidden(true);
+            }
+            ov.effect.setHidden(false);
+            // A liquid material on an older macOS falls back to the default classic material.
+            ov.effect.setMaterial(material(if is_liquid(name) { "hud" } else { name }));
+        }
+    }
+    ov.liquid
+}
+
+fn layout_glass(ov: &Overlay) {
+    let (Some(g), Some(d)) = (&ov.glass, ov.shape.disc) else { return };
+    let h = ov.window.contentView().map(|v| v.bounds().size.height).unwrap_or(ov.shape.size[1]);
+    g.setFrame(disc_rect(d, h));
+    g.setCornerRadius(d[2]);
 }
 
 fn disable_occlusion_detection(wkwebview: *mut c_void) -> bool {
@@ -175,6 +245,7 @@ fn apply_shape(ov: &mut Overlay, shape: Shape) {
     if ov.shape != shape {
         ov.effect.setMaskImage(Some(&mask_image(&shape)));
         ov.shape = shape;
+        layout_glass(ov);
     }
 }
 
@@ -226,16 +297,17 @@ pub fn set_theme(theme: &str) {
             };
             let appearance = name.and_then(NSAppearance::appearanceNamed);
             ov.effect.setAppearance(appearance.as_deref());
+            if let Some(g) = &ov.glass {
+                let v: &NSView = g;
+                v.setAppearance(appearance.as_deref());
+            }
         }
     });
 }
 
-pub fn set_material(name: &str) {
-    OVERLAY.with(|o| {
-        if let Some(ov) = o.borrow().as_ref() {
-            ov.effect.setMaterial(material(name));
-        }
-    });
+/// Returns whether Liquid Glass is now in use (false for classic materials or on macOS < 26).
+pub fn set_material(name: &str) -> bool {
+    OVERLAY.with(|o| o.borrow_mut().as_mut().map(|ov| apply_material(ov, name)).unwrap_or(false))
 }
 
 pub fn app_is_active(mtm: MainThreadMarker) -> bool {

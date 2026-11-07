@@ -31,7 +31,8 @@ pub struct Settings {
     /// Terminal for "open terminal here": app name / bundle id on macOS, exe on Windows.
     #[serde(default)]
     pub terminal: Option<PerPlatform<String>>,
-    /// Glass material on macOS: hud | popover | menu | sidebar | fullscreen-ui | under-window.
+    /// Glass material on macOS: liquid | liquid-clear (Liquid Glass, macOS 26+; falls back to hud) |
+    /// hud | popover | menu | sidebar | fullscreen-ui | under-window.
     #[serde(default = "default_material")]
     pub material: String,
 }
@@ -43,7 +44,7 @@ fn default_accent() -> String {
     "system".into()
 }
 fn default_material() -> String {
-    "hud".into()
+    "liquid".into()
 }
 
 impl Default for Settings {

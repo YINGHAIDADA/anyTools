@@ -270,7 +270,7 @@ function General({ status, overview, draft }: { status: Status; overview: Overvi
         </div>
       </section>
 
-      {draft.cfg && <Appearance draft={draft} mac={mac} />}
+      {draft.cfg && <Appearance draft={draft} mac={mac} liquid={status.liquid_glass} />}
     </div>
   );
 }
@@ -285,7 +285,9 @@ const ACCENTS = [
 ];
 
 const MATERIALS = [
-  { value: 'hud', label: 'HUD（默认）' },
+  { value: 'liquid', label: '液态玻璃（默认）' },
+  { value: 'liquid-clear', label: '液态玻璃 · 通透' },
+  { value: 'hud', label: 'HUD' },
   { value: 'popover', label: '弹出层' },
   { value: 'menu', label: '菜单' },
   { value: 'sidebar', label: '侧边栏' },
@@ -293,7 +295,7 @@ const MATERIALS = [
   { value: 'under-window', label: '窗口下层' },
 ];
 
-function Appearance({ draft, mac }: { draft: Draft; mac: boolean }) {
+function Appearance({ draft, mac, liquid }: { draft: Draft; mac: boolean; liquid: boolean }) {
   const s = draft.cfg!.settings;
   const set = (f: (x: typeof s) => void) => draft.edit((c) => f(c.settings));
   const custom = s.accent !== 'system' && !ACCENTS.some((a) => a.value === s.accent);
@@ -325,11 +327,12 @@ function Appearance({ draft, mac }: { draft: Draft; mac: boolean }) {
         </div>
         {mac && (
           <div className="row">
-            <span>毛玻璃材质</span>
+            <span>玻璃材质</span>
             <select value={s.material} onChange={(e) => set((x) => void (x.material = e.target.value))}>
               {MATERIALS.map((m) => (
                 <option key={m.value} value={m.value}>
                   {m.label}
+                  {m.value.startsWith('liquid') && !liquid ? '（需要 macOS 26，当前用 HUD）' : ''}
                 </option>
               ))}
             </select>

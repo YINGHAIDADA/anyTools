@@ -90,6 +90,8 @@ pub fn shape(n: usize) -> Value {
         "size": [GEOM.win, GEOM.win],
         "polys": (0..n).map(|i| sector_polygon(i, n, steps)).collect::<Vec<_>>(),
         "circles": [[c, c, GEOM.r_center]],
+        // Liquid Glass covers the whole wheel as one disc (it can't take the sector shape).
+        "disc": [c, c, GEOM.r_out],
     })
 }
 

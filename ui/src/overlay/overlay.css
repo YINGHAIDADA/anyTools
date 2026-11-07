@@ -1,3 +1,11 @@
+/*
+ * Wheel overlay — macOS 26 style.
+ *
+ * The glass itself is native (NSGlassEffectView: Liquid Glass; or NSVisualEffectView on older macOS).
+ * This page draws only what sits on the glass: hairline dividers, icons, labels, the center text, and
+ * the hover light (light.ts, WebGL). No bevels, no grain, no tinted bodies.
+ */
+
 @property --angle {
   syntax: '<angle>';
   inherits: true;
@@ -5,46 +13,36 @@
 }
 
 :root {
-  --accent-a: #8b6cff;
-  --accent-b: #22d3ee;
-  --accent-c: #f472b6;
+  /* Apple Intelligence glow colors (light.ts mirrors these). */
+  --ai-1: #8d9fff;
+  --ai-2: #bc82f3;
+  --ai-3: #f5b9ea;
+  --ai-4: #ff6778;
+  --ai-5: #ffba71;
 
-  --sector: rgba(22, 22, 32, 0.34);
-  --sector-hover: color-mix(in srgb, var(--accent-a) 22%, transparent);
-  --sector-flash: color-mix(in srgb, var(--accent-a) 55%, white 10%);
-  --sector-stroke: rgba(255, 255, 255, 0.1);
-  --disc: rgba(18, 18, 26, 0.42);
-  --disc-stroke: rgba(255, 255, 255, 0.12);
-  --hl-top: rgba(255, 255, 255, 0.32);
-  --hl-mid: rgba(255, 255, 255, 0.06);
-  --hl-bottom: rgba(255, 255, 255, 0.14);
-  --fg: #fff;
-  --fg-icon: rgba(255, 255, 255, 0.82);
-  --fg-label: rgba(255, 255, 255, 0.55);
-  --fg-label-hover: rgba(255, 255, 255, 0.96);
+  --hairline: rgba(255, 255, 255, 0.16);
+  --hover-fill: rgba(255, 255, 255, 0.07);
+  --flash-fill: rgba(255, 255, 255, 0.16);
+  /* Classic (non-Liquid) glass only: a light tint so content stays legible on busy backgrounds. */
+  --classic-tint: rgba(20, 20, 26, 0.18);
+  --fg: rgba(255, 255, 255, 0.96);
+  --fg-icon: rgba(255, 255, 255, 0.88);
+  --fg-label: rgba(255, 255, 255, 0.62);
   --fg-hint: rgba(255, 255, 255, 0.5);
-  --text-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
-  --noise: 0.05;
+  --text-shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.28);
   color-scheme: dark;
 }
 
 :root.light {
-  --sector: rgba(255, 255, 255, 0.34);
-  --sector-hover: color-mix(in srgb, var(--accent-a) 18%, rgba(255, 255, 255, 0.4));
-  --sector-flash: color-mix(in srgb, var(--accent-a) 40%, white);
-  --sector-stroke: rgba(0, 0, 0, 0.08);
-  --disc: rgba(255, 255, 255, 0.5);
-  --disc-stroke: rgba(0, 0, 0, 0.08);
-  --hl-top: rgba(255, 255, 255, 0.9);
-  --hl-mid: rgba(255, 255, 255, 0.2);
-  --hl-bottom: rgba(0, 0, 0, 0.06);
-  --fg: #111;
-  --fg-icon: rgba(0, 0, 0, 0.72);
-  --fg-label: rgba(0, 0, 0, 0.5);
-  --fg-label-hover: rgba(0, 0, 0, 0.9);
+  --hairline: rgba(0, 0, 0, 0.10);
+  --hover-fill: rgba(255, 255, 255, 0.32);
+  --flash-fill: rgba(255, 255, 255, 0.5);
+  --classic-tint: rgba(255, 255, 255, 0.22);
+  --fg: rgba(0, 0, 0, 0.88);
+  --fg-icon: rgba(0, 0, 0, 0.78);
+  --fg-label: rgba(0, 0, 0, 0.55);
   --fg-hint: rgba(0, 0, 0, 0.45);
   --text-shadow: none;
-  --noise: 0.035;
   color-scheme: light;
 }
 
@@ -68,13 +66,13 @@ body {
   position: relative;
   width: 420px;
   height: 420px;
-  transform: scale(0.94);
+  transform: scale(0.96);
   transform-origin: 50% 50%;
 }
 
 #stage.open {
   transform: scale(1);
-  transition: transform 220ms linear(0, 0.38 9%, 0.72 19%, 0.94 30%, 1.04 41%, 1.06 50%, 1.03 64%, 1.005 80%, 1);
+  transition: transform 260ms linear(0, 0.29 7%, 0.62 16%, 0.86 27%, 0.99 38%, 1.03 48%, 1.02 62%, 1);
 }
 
 #stage.no-anim,
@@ -83,107 +81,101 @@ body {
   animation: none !important;
 }
 
-/* Submenu in / out */
-#stage.swap-out #wheel,
-#stage.swap-out #center {
+/* Submenu in / out: a quick cross-fade with a slight zoom. */
+#stage.swap-out #wheel-wrap {
   opacity: 0;
-  transform: scale(0.9);
-  transition: opacity 70ms ease-in, transform 70ms ease-in;
+  transform: scale(0.95);
+  transition: opacity 80ms ease-in, transform 80ms ease-in;
 }
-#stage.swap-out-back #wheel,
-#stage.swap-out-back #center {
+#stage.swap-out-back #wheel-wrap {
   opacity: 0;
-  transform: scale(1.08);
-  transition: opacity 70ms ease-in, transform 70ms ease-in;
+  transform: scale(1.04);
+  transition: opacity 80ms ease-in, transform 80ms ease-in;
 }
-#stage.swap-in #wheel,
-#stage.swap-in #center {
-  animation: swap-in 170ms cubic-bezier(0.2, 0.9, 0.3, 1.15);
-}
-#stage.swap-in-back #wheel,
-#stage.swap-in-back #center {
-  animation: swap-in-back 170ms cubic-bezier(0.2, 0.9, 0.3, 1.15);
-}
+#stage.swap-in #wheel-wrap { animation: swap-in 200ms cubic-bezier(0.25, 0.9, 0.3, 1); }
+#stage.swap-in-back #wheel-wrap { animation: swap-in-back 200ms cubic-bezier(0.25, 0.9, 0.3, 1); }
 @keyframes swap-in {
-  from { opacity: 0; transform: scale(1.12); }
+  from { opacity: 0; transform: scale(1.05); }
   to { opacity: 1; transform: scale(1); }
 }
 @keyframes swap-in-back {
-  from { opacity: 0; transform: scale(0.88); }
+  from { opacity: 0; transform: scale(0.95); }
   to { opacity: 1; transform: scale(1); }
 }
 
-#wheel {
+#wheel-wrap {
   position: absolute;
   inset: 0;
-  overflow: visible;
   transform-origin: 50% 50%;
 }
 
-.hl-top { stop-color: var(--hl-top); }
-.hl-mid { stop-color: var(--hl-mid); }
-.hl-bottom { stop-color: var(--hl-bottom); }
+#wheel,
+#wheel-fg,
+#light {
+  position: absolute;
+  inset: 0;
+  width: 420px;
+  height: 420px;
+  overflow: visible;
+  pointer-events: none;
+}
+#light { display: none; }
+:root.gl #light { display: block; }
 
+/* ---------------- on the glass ---------------- */
+
+/* Sector areas: invisible until hovered. */
 .sector {
-  fill: var(--sector);
-  stroke: var(--sector-stroke);
-  stroke-width: 1;
-  transition: fill 110ms ease-out, transform 140ms cubic-bezier(0.2, 0.9, 0.3, 1.2), opacity 120ms;
+  fill: transparent;
+  stroke: none;
+  transition: fill 180ms ease-out, opacity 120ms;
 }
-.sector.hover { fill: var(--sector-hover); }
-.sector.flash { fill: var(--sector-flash); transition: fill 40ms; }
-.sector.disabled { opacity: 0.55; }
-.sector.disabled.hover { fill: var(--sector); }
+.sector.hover { fill: var(--hover-fill); }
+.sector.flash { fill: var(--flash-fill); transition: fill 60ms; }
+.sector.disabled.hover { fill: transparent; }
 
-.sector-hl {
+/* Classic glass is cut to the sector shapes, so it needs no dividers but a light tint. */
+:root:not(.liquid) .sector { fill: var(--classic-tint); }
+:root:not(.liquid) .sector.hover { fill: color-mix(in srgb, var(--classic-tint), white 9%); }
+:root:not(.liquid) .sector.disabled.hover { fill: var(--classic-tint); }
+:root:not(.liquid) .center-disc { fill: var(--classic-tint); }
+
+/* Liquid Glass is one disc: hairlines mark the sectors and the hub. */
+.divider {
+  stroke: var(--hairline);
+  stroke-width: 1;
+  stroke-linecap: round;
   fill: none;
-  stroke: url(#hl);
-  stroke-width: 1;
-  pointer-events: none;
+  vector-effect: non-scaling-stroke;
 }
-
-.noise {
-  pointer-events: none;
-  opacity: var(--noise);
-  mix-blend-mode: overlay;
-}
-
-.center-disc {
-  fill: var(--disc);
-  stroke: var(--disc-stroke);
-  stroke-width: 1;
-}
-.center-hl {
-  fill: none;
-  stroke: url(#hl);
-  stroke-width: 1;
-}
+:root:not(.liquid) .divider { display: none; }
+.center-disc { fill: transparent; stroke: none; }
 
 .item-icon {
   color: var(--fg-icon);
-  transition: color 110ms, transform 140ms cubic-bezier(0.2, 0.9, 0.3, 1.2), opacity 120ms;
+  transition: color 160ms, transform 220ms cubic-bezier(0.25, 0.9, 0.3, 1.15), opacity 120ms;
   transform-box: fill-box;
   transform-origin: center;
 }
-.item-icon.hover { color: var(--fg); transform: scale(1.14); }
-.item-icon.disabled { opacity: 0.32; }
+.item-icon.hover { color: var(--fg); transform: scale(1.1); }
+.item-icon.disabled { opacity: 0.3; }
 .item-icon.disabled.hover { transform: none; }
-.item-icon .app-icon image { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25)); }
 
 .item-label {
   fill: var(--fg-label);
   font-size: 10.5px;
-  letter-spacing: 0.02em;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   text-anchor: middle;
-  transition: fill 110ms, opacity 120ms;
+  transition: fill 160ms, opacity 120ms;
 }
-.item-label.hover { fill: var(--fg-label-hover); }
-.item-label.disabled { opacity: 0.45; }
+.item-label.hover { fill: var(--fg); }
+.item-label.disabled { opacity: 0.4; }
 
 .submenu-mark {
   fill: none;
   stroke: var(--fg-label);
-  stroke-width: 1.4;
+  stroke-width: 1.3;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -204,20 +196,20 @@ body {
   color: var(--fg);
   pointer-events: none;
   text-align: center;
-  transform-origin: 50% 50%;
 }
-#center-icon { height: 24px; }
-#center-icon svg { width: 24px; height: 24px; }
+#center-icon { height: 22px; opacity: 0.92; }
+#center-icon svg { width: 22px; height: 22px; }
 #center-label {
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   max-width: 92px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   text-shadow: var(--text-shadow);
 }
-#center-label.dim { opacity: 0.55; }
+#center-label.dim { opacity: 0.5; }
 #center-hint {
   font-size: 9.5px;
   color: var(--fg-hint);
@@ -227,41 +219,30 @@ body {
   text-overflow: ellipsis;
 }
 
-/* ---------------- flowing edge glow ---------------- */
+/* ---------------- fallback glow (no WebGL) ----------------
+   A slowly turning Apple Intelligence gradient, masked to the hovered sector's outline. */
 
 .glow {
   position: absolute;
   inset: 0;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 120ms ease-out;
+  transition: opacity 180ms ease-out;
 }
 .glow.on { opacity: 1; }
-
-/* A rotating conic gradient, masked to the hovered sector's outline. */
 .glow-ring {
   position: absolute;
   inset: 0;
-  background: conic-gradient(
-    from var(--angle) at 50% 50%,
-    var(--accent-a),
-    var(--accent-b) 25%,
-    transparent 38%,
-    transparent 55%,
-    var(--accent-c) 70%,
-    var(--accent-a)
-  );
+  background: conic-gradient(from var(--angle) at 50% 50%, var(--ai-1), var(--ai-2), var(--ai-3), var(--ai-4), var(--ai-5), var(--ai-2), var(--ai-1));
   -webkit-mask-image: var(--mask);
   mask-image: var(--mask);
   -webkit-mask-size: 100% 100%;
   mask-size: 100% 100%;
-  animation: spin 2.4s linear infinite;
-  /* Don't keep the compositor busy while the glow (or the whole window) is invisible. */
+  animation: spin 4s linear infinite;
   animation-play-state: paused;
 }
 .glow.on .glow-ring { animation-play-state: running; }
-.glow-bloom { filter: blur(9px); opacity: 0.85; }
-:root.light .glow-bloom { opacity: 0.6; }
+.glow-bloom { filter: blur(8px); opacity: 0.8; }
 
 @keyframes spin {
   from { --angle: var(--angle-base, 0deg); }
@@ -271,5 +252,5 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .glow-ring { animation: none; }
   #stage, #stage.open { transform: none; transition: none; }
-  #stage.swap-in #wheel, #stage.swap-in-back #wheel { animation: none; }
+  #stage.swap-in #wheel-wrap, #stage.swap-in-back #wheel-wrap { animation: none; }
 }
