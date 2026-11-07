@@ -88,7 +88,7 @@ jobs:
         run: |
           {
             echo '#!/bin/sh'
-            echo 'root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)'
+            echo "root='$GITHUB_WORKSPACE'"
             echo 'export TAURI_APP_PATH="$root/app" TAURI_FRONTEND_PATH="$root/ui"'
             echo 'exec node "$root/ui/node_modules/@tauri-apps/cli/tauri.js" "$@"'
           } > "$RUNNER_TEMP/tauri-release"
