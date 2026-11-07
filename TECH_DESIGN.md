@@ -563,7 +563,9 @@ anyTools/
 
 > **进展（2026-11-07，macOS 第 1 轮，详见 [poc/M0-RESULTS.md](poc/M0-RESULTS.md)）**：钩子吞键、不抢焦点、Finder 读取（p95 51ms）、CSS 辉光（60Hz 掉帧 0.12%）通过；按键到画面第 1 轮中位数 68ms；第 2 轮关掉 WebView 的遮挡检测、并让默认轮盘提前画好后，**首帧估算 p95 23ms，页面更新画完 p95 43ms，通过**（依赖一个私有接口，失效时退回约 68ms）；毛玻璃效果待肉眼确认；向其他应用发按键、WebGL、120Hz 还没测；Windows 部分还没开始。
 
-> **进展（2026-11-07）**：M1、M2 的 macOS 部分已实现，说明见 [README.md](README.md)。暂未做：Windows 实现、设置页可视化编辑（M3）、内嵌 JS 脚本（M3）、自动更新和公证（M4）。
+> **进展（2026-11-07）**：M1–M4 的 macOS 部分已实现，说明见 [README.md](README.md)。M4 的公证流程已就绪，但还没有 Developer ID 证书，尚未实际公证过；GitHub 仓库未建，CI 与应用内更新未实际运行过。暂未做：Windows 实现。
+>
+> 与方案的差异：脚本权限声明按 §8 实现，但轮盘里本来就能做的事（发按键、剪贴板、启动应用、通知）不需要声明；`http.fetch` 是同步实现，返回普通对象而不是 Response。
 
 **M1 核心框架**：Module / Registry / EventBus / ConfigStore（热加载）/ Resolver / 平台 trait 与 mock 实现、托盘或菜单栏图标、权限引导页。
 

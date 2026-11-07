@@ -5,3 +5,5 @@ dist/
 *.log
 /poc/src-tauri/gen/
 /app/gen/
+/ui/.preview/
+/.claude/

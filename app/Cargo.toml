@@ -14,8 +14,10 @@ anytools-core.workspace = true
 anytools-platform.workspace = true
 anytools-actions.workspace = true
 anytools-wheel.workspace = true
+anytools-script.workspace = true
 tauri = { version = "2.12", features = ["macos-private-api", "tray-icon", "image-png"] }
 tauri-plugin-single-instance = "2.5"
+tauri-plugin-updater = "2.14"
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
@@ -24,6 +26,9 @@ tracing-appender.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-service-management = "0.3"
 
 [dev-dependencies]
 anytools-platform.workspace = true
+serde_yaml_ng.workspace = true

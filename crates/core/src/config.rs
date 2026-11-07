@@ -157,6 +157,38 @@ impl ConfigStore {
         }
     }
 
+    /// Validates `cfg` exactly like a reload would, then writes it to disk (keeping a `.bak` of the
+    /// previous file) and makes it current. YAML comments in the old file are not preserved.
+    pub fn save(&self, cfg: ConfigFile) -> Result<Arc<ConfigFile>, String> {
+        if cfg.version > CONFIG_VERSION {
+            return Err(format!("配置版本 {} 高于支持的 {CONFIG_VERSION}", cfg.version));
+        }
+        for v in self.validators.lock().unwrap().iter() {
+            v(&cfg)?;
+        }
+        let text = format!(
+            "# anyTools 配置文件（由设置窗口保存；手写的注释不会保留，上一版在同目录的 config.yaml.bak）\n{}",
+            serde_yaml_ng::to_string(&cfg).map_err(|e| format!("无法生成配置文件: {e}"))?
+        );
+        // Round-trip check: what we write must load back to the same config.
+        if ConfigFile::parse(&text)? != cfg {
+            return Err("内部错误：生成的配置无法原样读回".into());
+        }
+        if self.path.exists() {
+            let _ = std::fs::copy(&self.path, self.path.with_extension("yaml.bak"));
+        }
+        let tmp = self.path.with_extension("yaml.tmp");
+        std::fs::write(&tmp, &text).map_err(|e| format!("写入配置失败: {e}"))?;
+        std::fs::rename(&tmp, &self.path).map_err(|e| format!("写入配置失败: {e}"))?;
+        // The watcher will also see this write and reload the identical file; harmless.
+        let cfg = Arc::new(cfg);
+        *self.current.write().unwrap() = cfg.clone();
+        *self.last_error.lock().unwrap() = None;
+        tracing::info!(path = %self.path.display(), "config saved");
+        self.bus.emit(CoreEvent::ConfigLoaded { path: self.path.display().to_string() });
+        Ok(cfg)
+    }
+
     /// Watches the config file and reloads (debounced) when it changes.
     pub fn watch(self: &Arc<Self>) -> Result<(), String> {
         use notify::{RecursiveMode, Watcher};
@@ -229,6 +261,28 @@ mod tests {
         std::fs::write(&path, "version: 1\nmodules:\n  demo: { n: 5 }\n").unwrap();
         assert_eq!(store.reload().unwrap().module("demo")["n"], 5);
         assert!(store.last_error().is_none());
+    }
+
+    #[test]
+    fn save_validates_backs_up_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let store = ConfigStore::open(path.clone(), DEFAULT, Arc::new(EventBus::default())).unwrap();
+        store.add_validator(Box::new(|c| if c.module("demo")["n"] == 0 { Err("n=0".into()) } else { Ok(()) }));
+        store.reload().unwrap();
+
+        let mut c = (*store.get()).clone();
+        c.modules.insert("demo".into(), serde_json::json!({ "n": 0 }));
+        assert_eq!(store.save(c.clone()).unwrap_err(), "n=0");
+        assert!(std::fs::read_to_string(&path).unwrap().contains("n: 1"), "rejected save leaves the file alone");
+
+        c.modules.insert("demo".into(), serde_json::json!({ "n": 3, "label": "中文: 冒号 # 井号" }));
+        c.settings.accent = "#7c5cff".into();
+        store.save(c.clone()).unwrap();
+        assert_eq!(*store.get(), c);
+        assert!(dir.path().join("config.yaml.bak").exists());
+        // A fresh store reading the written file gets the same config.
+        assert_eq!(*store.reload().unwrap(), c);
     }
 
     #[test]

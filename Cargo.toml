@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/platform", "crates/actions", "crates/modules/wheel", "app"]
+members = ["crates/core", "crates/platform", "crates/actions", "crates/script", "crates/modules/wheel", "app"]
 # The M0 proof of concept is a separate, throwaway project.
 exclude = ["poc"]
 
@@ -15,6 +15,7 @@ anytools-core = { path = "crates/core" }
 anytools-platform = { path = "crates/platform" }
 anytools-actions = { path = "crates/actions" }
 anytools-wheel = { path = "crates/modules/wheel" }
+anytools-script = { path = "crates/script" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"

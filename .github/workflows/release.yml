@@ -1,0 +1,102 @@
+name: Release
+
+# Push a tag like v0.2.0 (matching the version in Cargo.toml / tauri.conf.json) to build a draft
+# GitHub release with the signed macOS app, the DMG, and the updater manifest (latest.json).
+#
+# Repository secrets:
+#   TAURI_SIGNING_PRIVATE_KEY            updater key (~/.tauri/anytools-updater.key)   required
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD   its password (empty if none)
+#   APPLE_CERTIFICATE                    base64 of the Developer ID Application .p12   optional
+#   APPLE_CERTIFICATE_PASSWORD           .p12 password
+#   APPLE_SIGNING_IDENTITY               e.g. "Developer ID Application: Name (TEAMID)"
+#   APPLE_API_KEY / APPLE_API_ISSUER     App Store Connect API key id / issuer id       optional
+#   APPLE_API_KEY_P8                     contents of the AuthKey_XXXX.p8 file
+# Without the Apple secrets the app is ad-hoc signed and not notarized: users must right-click › Open.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    env:
+      ANYTOOLS_UPDATE_URL: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+        working-directory: ui
+
+      - name: Check the tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          v=$(node -p "require('./app/tauri.conf.json').version")
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != app version v$v"; exit 1; }
+
+      - name: Import the Developer ID certificate
+        id: cert
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "No APPLE_CERTIFICATE secret: ad-hoc signing, no notarization."
+            echo "identity=-" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          kc="$RUNNER_TEMP/build.keychain"
+          pw=$(openssl rand -hex 16)
+          security create-keychain -p "$pw" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$pw" "$kc"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pw" "$kc"
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          echo "identity=${{ secrets.APPLE_SIGNING_IDENTITY }}" >> "$GITHUB_OUTPUT"
+
+      - name: Write the App Store Connect key
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -z "$APPLE_API_KEY_P8" ] || [ "${{ steps.cert.outputs.identity }}" = "-" ]; then
+            echo "No notarization key (or no Developer ID): skipping notarization."
+            exit 0
+          fi
+          printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+
+      - name: Build, sign, notarize, publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ steps.cert.outputs.identity }}
+          # Tauri notarizes when all three are set; APPLE_API_KEY_PATH only exists if the step above wrote it.
+          APPLE_API_KEY: ${{ env.APPLE_API_KEY_PATH && secrets.APPLE_API_KEY || '' }}
+          APPLE_API_ISSUER: ${{ env.APPLE_API_KEY_PATH && secrets.APPLE_API_ISSUER || '' }}
+        with:
+          projectPath: app
+          tauriScript: npm --prefix ../ui run tauri --
+          args: --target universal-apple-darwin --config tauri.release.conf.json
+          tagName: ${{ github.ref_name }}
+          releaseName: anyTools ${{ github.ref_name }}
+          releaseBody: See the commit history for changes.
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true

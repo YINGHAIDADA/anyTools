@@ -1,11 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { Geom, PermState, Status, WheelView } from '../shared/types';
+import type { FieldEnv } from './fields';
 import { Icon } from './Icon';
-import { WheelPreview } from './WheelPreview';
+import type { Platform, WheelModuleCfg } from './model';
+import { RulesEditor, TriggersEditor } from './RulesEditor';
+import { useDraft, type Draft } from './useDraft';
+import { WheelEditor } from './WheelEditor';
 
-type Page = 'general' | 'wheels' | 'config' | 'about';
+type Page = 'general' | 'wheels' | 'rules' | 'config' | 'about';
 
 interface Overview {
   geom: Geom;
@@ -17,8 +21,9 @@ interface Overview {
 
 const PAGES: { id: Page; label: string; icon: string }[] = [
   { id: 'general', label: '通用', icon: 'Settings2' },
-  { id: 'wheels', label: '快捷轮盘', icon: 'Disc3' },
-  { id: 'config', label: '配置文件', icon: 'FileCode2' },
+  { id: 'wheels', label: '轮盘', icon: 'Disc3' },
+  { id: 'rules', label: '唤起与规则', icon: 'Filter' },
+  { id: 'config', label: '配置与脚本', icon: 'FileCode2' },
   { id: 'about', label: '关于', icon: 'Info' },
 ];
 
@@ -27,6 +32,8 @@ export function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [icons, setIcons] = useState<Record<string, string>>({});
+  const [scripts, setScripts] = useState<string[]>([]);
+  const draft = useDraft();
 
   const refresh = useCallback(async () => {
     const st = await invoke<Status>('status');
@@ -35,19 +42,36 @@ export function App() {
     if (ov) setOverview(ov);
   }, []);
 
+  const loadIcons = useCallback(() => {
+    void invoke<Record<string, string> | null>('module_call', { module: 'wheel', msg: { type: 'icons' } }).then((i) => i && setIcons(i));
+    void invoke<string[]>('list_scripts').then(setScripts);
+  }, []);
+
   useEffect(() => {
     void refresh();
-    void invoke<Record<string, string> | null>('module_call', { module: 'wheel', msg: { type: 'icons' } }).then((i) => i && setIcons(i));
-    const un = listen('core', () => void refresh());
+    loadIcons();
+    const un = listen<{ type: string }>('core', (ev) => {
+      void refresh();
+      if (ev.payload.type === 'config_loaded') loadIcons();
+    });
     // Permissions are granted in System Settings; poll while the window is open.
     const t = setInterval(() => void refresh(), 1500);
     return () => {
       clearInterval(t);
       void un.then((f) => f());
     };
-  }, [refresh]);
+  }, [refresh, loadIcons]);
 
   const needsSetup = status !== null && (!status.hook || status.permissions.accessibility !== 'granted');
+  const platform: Platform = status?.platform === 'win' ? 'win' : 'mac';
+  const wheelCfg = draft.cfg?.modules.wheel;
+  const setWheel = (f: (c: WheelModuleCfg) => void) => draft.edit((c) => c.modules.wheel && f(c.modules.wheel));
+  const env: FieldEnv = {
+    platform,
+    wheels: Object.entries(wheelCfg?.wheels ?? {}).map(([k, w]) => ({ key: k, name: w.name ?? k })),
+    scripts,
+  };
+  const editing = page === 'wheels' || page === 'rules' || page === 'general';
 
   return (
     <div className="app">
@@ -63,6 +87,7 @@ export function App() {
               <span>{p.label}</span>
               {p.id === 'general' && needsSetup && <i className="dot warn" />}
               {p.id === 'config' && status?.config_error && <i className="dot bad" />}
+              {(p.id === 'wheels' || p.id === 'rules') && draft.dirty && <i className="dot accent" title="有未保存的修改" />}
             </button>
           ))}
         </nav>
@@ -73,14 +98,32 @@ export function App() {
         {!status ? (
           <div className="loading">加载中…</div>
         ) : page === 'general' ? (
-          <General status={status} overview={overview} />
+          <General status={status} overview={overview} draft={draft} />
         ) : page === 'wheels' ? (
-          <Wheels overview={overview} icons={icons} />
+          wheelCfg && overview ? (
+            <div className="page wide">
+              <h1>轮盘</h1>
+              <WheelEditor cfg={wheelCfg} setCfg={setWheel} geom={overview.geom} icons={icons} env={env} />
+            </div>
+          ) : (
+            <div className="loading">加载中…</div>
+          )
+        ) : page === 'rules' ? (
+          wheelCfg ? (
+            <div className="page">
+              <h1>唤起与规则</h1>
+              <TriggersEditor cfg={wheelCfg} setCfg={setWheel} platform={platform} />
+              <RulesEditor cfg={wheelCfg} setCfg={setWheel} platform={platform} />
+            </div>
+          ) : (
+            <div className="loading">加载中…</div>
+          )
         ) : page === 'config' ? (
-          <Config status={status} />
+          <Config status={status} draft={draft} scripts={scripts} />
         ) : (
           <About status={status} />
         )}
+        {editing && <SaveBar draft={draft} />}
       </main>
     </div>
   );
@@ -161,7 +204,7 @@ function triggerText(t: Overview['triggers'][number], mac: boolean): string {
   return '?';
 }
 
-function General({ status, overview }: { status: Status; overview: Overview | null }) {
+function General({ status, overview, draft }: { status: Status; overview: Overview | null; draft: Draft }) {
   const mac = status.platform === 'mac';
   const p = status.permissions;
   const trigger = overview?.triggers[0];
@@ -221,15 +264,244 @@ function General({ status, overview }: { status: Status; overview: Overview | nu
       )}
 
       <section>
-        <h2>外观</h2>
+        <h2>启动</h2>
         <div className="card rows">
-          <Row label="主题" value={{ auto: '跟随系统', dark: '深色', light: '浅色' }[status.settings.theme]} />
-          <Row label="强调色" value={status.settings.accent === 'system' ? '默认（紫→青渐变）' : status.settings.accent} />
-          <Row label="毛玻璃材质" value={status.settings.material} />
+          <Autostart />
         </div>
-        <p className="hint">在配置文件的 settings 中修改；可视化编辑会在后续版本提供。</p>
       </section>
+
+      {draft.cfg && <Appearance draft={draft} mac={mac} />}
     </div>
+  );
+}
+
+const ACCENTS = [
+  { value: 'system', label: '默认', css: 'conic-gradient(#8b6cff, #22d3ee, #f472b6, #8b6cff)' },
+  { value: '#0a84ff', label: '蓝', css: '#0a84ff' },
+  { value: '#30d158', label: '绿', css: '#30d158' },
+  { value: '#ff9f0a', label: '橙', css: '#ff9f0a' },
+  { value: '#ff375f', label: '粉', css: '#ff375f' },
+  { value: '#bf5af2', label: '紫', css: '#bf5af2' },
+];
+
+const MATERIALS = [
+  { value: 'hud', label: 'HUD（默认）' },
+  { value: 'popover', label: '弹出层' },
+  { value: 'menu', label: '菜单' },
+  { value: 'sidebar', label: '侧边栏' },
+  { value: 'fullscreen-ui', label: '全屏界面' },
+  { value: 'under-window', label: '窗口下层' },
+];
+
+function Appearance({ draft, mac }: { draft: Draft; mac: boolean }) {
+  const s = draft.cfg!.settings;
+  const set = (f: (x: typeof s) => void) => draft.edit((c) => f(c.settings));
+  const custom = s.accent !== 'system' && !ACCENTS.some((a) => a.value === s.accent);
+  const term = typeof s.terminal === 'string' ? s.terminal : (s.terminal as { mac?: string; win?: string } | null | undefined)?.[mac ? 'mac' : 'win'] ?? '';
+  return (
+    <section>
+      <h2>外观</h2>
+      <div className="card rows">
+        <div className="row">
+          <span>主题</span>
+          <div className="seg">
+            {(['dark', 'light', 'auto'] as const).map((t) => (
+              <button key={t} className={s.theme === t ? 'active' : ''} onClick={() => set((x) => void (x.theme = t))}>
+                {{ dark: '深色', light: '浅色', auto: '跟随系统' }[t]}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="row">
+          <span>强调色</span>
+          <div className="swatches">
+            {ACCENTS.map((a) => (
+              <button key={a.value} title={a.label} className={'swatch' + (s.accent === a.value ? ' active' : '')} style={{ background: a.css }} onClick={() => set((x) => void (x.accent = a.value))} />
+            ))}
+            <label className={'swatch custom' + (custom ? ' active' : '')} title="自定义" style={custom ? { background: s.accent } : undefined}>
+              <input type="color" value={custom ? s.accent : '#7c5cff'} onChange={(e) => set((x) => void (x.accent = e.target.value))} />
+            </label>
+          </div>
+        </div>
+        {mac && (
+          <div className="row">
+            <span>毛玻璃材质</span>
+            <select value={s.material} onChange={(e) => set((x) => void (x.material = e.target.value))}>
+              {MATERIALS.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div className="row">
+          <span>「在此打开终端」使用</span>
+          <select
+            value={term}
+            onChange={(e) =>
+              set((x) => {
+                const cur = typeof x.terminal === 'object' && x.terminal ? { ...x.terminal } : {};
+                (cur as Record<string, string>)[mac ? 'mac' : 'win'] = e.target.value;
+                x.terminal = cur;
+              })
+            }
+          >
+            {(mac
+              ? [
+                  ['com.apple.Terminal', '终端'],
+                  ['com.googlecode.iterm2', 'iTerm2'],
+                  ['dev.warp.Warp-Stable', 'Warp'],
+                  ['com.mitchellh.ghostty', 'Ghostty'],
+                  ['net.kovidgoyal.kitty', 'kitty'],
+                ]
+              : [
+                  ['wt.exe', 'Windows Terminal'],
+                  ['pwsh.exe', 'PowerShell'],
+                  ['cmd.exe', '命令提示符'],
+                ]
+            )
+              .concat(term && ![...['com.apple.Terminal', 'com.googlecode.iterm2', 'dev.warp.Warp-Stable', 'com.mitchellh.ghostty', 'net.kovidgoyal.kitty', 'wt.exe', 'pwsh.exe', 'cmd.exe']].includes(term) ? [[term, term]] : [])
+              .map(([v, l]) => (
+                <option key={v} value={v}>
+                  {l}
+                </option>
+              ))}
+          </select>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Autostart() {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    void invoke<boolean>('autostart_get').then(setOn, (e) => setErr(String(e)));
+  }, []);
+  return (
+    <div className="row">
+      <span>登录时自动启动</span>
+      {err ? (
+        <span className="field-err">{err}</span>
+      ) : (
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={!!on}
+            disabled={on === null}
+            onChange={async (e) => {
+              const want = e.target.checked;
+              try {
+                setOn(await invoke<boolean>('autostart_set', { enabled: want }));
+                setErr(null);
+              } catch (x) {
+                setErr(String(x));
+              }
+            }}
+          />
+          <span />
+        </label>
+      )}
+    </div>
+  );
+}
+
+function SaveBar({ draft }: { draft: Draft }) {
+  if (!draft.dirty && !draft.error) return null;
+  return (
+    <div className={'savebar' + (draft.error ? ' bad' : '')}>
+      <div className="savebar-text">
+        {draft.error ? (
+          <>
+            <Icon name="CircleX" size={15} />
+            <span title={draft.error}>{draft.error}</span>
+          </>
+        ) : draft.validating ? (
+          <span>检查中…</span>
+        ) : (
+          <>
+            <Icon name="CircleDot" size={15} />
+            <span>有未保存的修改</span>
+          </>
+        )}
+      </div>
+      <button onClick={draft.discard} disabled={draft.saving}>
+        <Icon name="Undo2" size={13} /> 放弃
+      </button>
+      <button className="primary" onClick={() => void draft.save()} disabled={!!draft.error || draft.validating || draft.saving}>
+        <Icon name="Check" size={13} /> {draft.saving ? '保存中…' : '保存并生效'}
+      </button>
+    </div>
+  );
+}
+
+interface UpdateInfo {
+  configured: boolean;
+  available: boolean;
+  version?: string;
+  notes?: string;
+}
+
+function Updates({ version }: { version: string }) {
+  const [state, setState] = useState<'idle' | 'checking' | 'installing'>('idle');
+  const [info, setInfo] = useState<UpdateInfo | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const check = async () => {
+    setState('checking');
+    setErr(null);
+    try {
+      setInfo(await invoke<UpdateInfo>('update_check'));
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setState('idle');
+    }
+  };
+  const install = async () => {
+    setState('installing');
+    setErr(null);
+    try {
+      await invoke('update_install');
+    } catch (e) {
+      setErr(String(e));
+      setState('idle');
+    }
+  };
+  return (
+    <>
+      <div className="row">
+        <span>当前版本</span>
+        <b>{version}</b>
+      </div>
+      <div className="row">
+        <span>
+          {info?.available ? (
+            <>
+              可更新到 <b>{info.version}</b>
+            </>
+          ) : info && !info.configured ? (
+            '此版本未配置更新服务'
+          ) : info ? (
+            '已是最新版本'
+          ) : (
+            '检查更新'
+          )}
+        </span>
+        {info?.available ? (
+          <button className="primary" onClick={install} disabled={state !== 'idle'}>
+            <Icon name="Download" size={13} /> {state === 'installing' ? '下载安装中…' : '下载并重启'}
+          </button>
+        ) : (
+          <button onClick={check} disabled={state !== 'idle'}>
+            <Icon name="RefreshCw" size={13} /> {state === 'checking' ? '检查中…' : '检查'}
+          </button>
+        )}
+      </div>
+      {info?.notes && <pre className="notes">{info.notes}</pre>}
+      {err && <div className="field-err" style={{ paddingBottom: 10 }}>{err}</div>}
+    </>
   );
 }
 
@@ -244,56 +516,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 
 // ------------------------------------------------------------------------------------------------
 
-function Wheels({ overview, icons }: { overview: Overview | null; icons: Record<string, string> }) {
-  const [sel, setSel] = useState<string | null>(null);
-  const wheels = overview?.wheels ?? [];
-  const current = useMemo(() => wheels.find((w) => w.key === sel) ?? wheels.find((w) => w.key === overview?.fallback) ?? wheels[0], [wheels, sel, overview]);
-  if (!overview || !current) return <div className="loading">加载中…</div>;
-  const usedBy = (key: string) => {
-    const n = overview.profiles.filter((p) => p === key).length;
-    const parts: string[] = [];
-    if (key === overview.fallback) parts.push('默认');
-    if (n) parts.push(`${n} 条规则`);
-    return parts.join(' · ');
-  };
-  return (
-    <div className="page wide">
-      <h1>快捷轮盘</h1>
-      <div className="wheels">
-        <div className="wheel-list">
-          {wheels.map((w) => (
-            <button key={w.key} className={w.key === current.key ? 'active' : ''} onClick={() => setSel(w.key)}>
-              <div className="wl-name">{w.name}</div>
-              <div className="wl-meta">
-                {w.items.length} 项{usedBy(w.key) ? ` · ${usedBy(w.key)}` : ''}
-              </div>
-            </button>
-          ))}
-        </div>
-        <div className="wheel-detail">
-          <WheelPreview wheel={current} geom={overview.geom} appIcons={icons} size={240} />
-          <div className="items">
-            {current.items.map((it, i) => (
-              <div className="item" key={it.id}>
-                <span className="item-n">{i + 1}</span>
-                <Icon name={it.icon} size={18} appIcons={icons} />
-                <span className="item-label">{it.label}</span>
-                {it.submenu && <span className="tag">子轮盘</span>}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-      <p className="hint">
-        顺序从 12 点钟方向开始顺时针排列。按应用或选中内容切换轮盘的规则、以及每一格的动作，在配置文件的 modules.wheel 中编辑。
-      </p>
-    </div>
-  );
-}
-
-// ------------------------------------------------------------------------------------------------
-
-function Config({ status }: { status: Status }) {
+function Config({ status, draft, scripts }: { status: Status; draft: Draft; scripts: string[] }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const reload = async () => {
@@ -301,6 +524,7 @@ function Config({ status }: { status: Status }) {
     setMsg(null);
     try {
       await invoke('reload_config');
+      await draft.reset();
       setMsg('已重新加载');
     } catch {
       // The error itself is shown below via status.config_error.
@@ -310,8 +534,15 @@ function Config({ status }: { status: Status }) {
   };
   return (
     <div className="page">
-      <h1>配置文件</h1>
+      <h1>配置与脚本</h1>
+      {draft.dirty && (
+        <div className="notice warn">
+          <Icon name="CircleDot" size={14} />
+          设置窗口里有未保存的修改。重新加载文件会放弃这些修改。
+        </div>
+      )}
       <section>
+        <h2>配置文件</h2>
         <div className="card">
           <div className="path">{status.config_path}</div>
           <div className="actions">
@@ -336,8 +567,32 @@ function Config({ status }: { status: Status }) {
             </div>
           </div>
         ) : (
-          <p className="hint">保存后自动生效。写错时会在这里和通知中提示，并继续使用上一份正确的配置。</p>
+          <p className="hint">
+            手动编辑保存后自动生效；写错时会在这里和通知中提示，并继续使用上一份正确的配置。在设置窗口里保存会重写整个文件：手写的注释不会保留，上一版备份在同目录的 config.yaml.bak。
+          </p>
         )}
+      </section>
+      <section>
+        <h2>脚本</h2>
+        <div className="card">
+          <div className="items">
+            {scripts.length === 0 && <p className="hint">scripts 目录里还没有脚本。</p>}
+            {scripts.map((s) => (
+              <div className="item" key={s}>
+                <Icon name="FileCode2" size={16} />
+                <span className="item-label">{s}</span>
+              </div>
+            ))}
+          </div>
+          <div className="actions">
+            <button onClick={() => invoke('reveal_scripts')}>
+              <Icon name="FolderOpen" size={14} /> 打开 scripts 目录
+            </button>
+          </div>
+        </div>
+        <p className="hint">
+          用 JavaScript 或 TypeScript 编写，在轮盘的一格里选「JS / TS 脚本」调用。目录里的 anytools.d.ts 提供编辑器补全，example.ts 是示例。脚本需要的权限（文件、命令、网络）写在开头的 // @permissions 行，第一次运行和每次修改后会请你确认。
+        </p>
       </section>
       <section>
         <h2>可用的动作类型</h2>
@@ -363,11 +618,31 @@ function About({ status }: { status: Status }) {
           <div className="about-ver">版本 {status.version}</div>
         </div>
       </div>
-      <div className="card rows">
-        {status.modules.map((m) => (
-          <Row key={m.id} label={m.name} value="已启用" />
-        ))}
-      </div>
+      <section>
+        <h2>更新</h2>
+        <div className="card rows">
+          <Updates version={status.version} />
+        </div>
+      </section>
+      <section>
+        <h2>模块</h2>
+        <div className="card rows">
+          {status.modules.map((m) => (
+            <Row key={m.id} label={m.name} value="已启用" />
+          ))}
+        </div>
+      </section>
+      <section>
+        <h2>诊断</h2>
+        <div className="card">
+          <div className="actions" style={{ paddingTop: 12 }}>
+            <button onClick={() => invoke('reveal_logs')}>
+              <Icon name="FolderOpen" size={14} /> 打开日志目录
+            </button>
+          </div>
+        </div>
+        <p className="hint">日志与崩溃记录都在这里，只保存在本机。报告问题时可以附上。</p>
+      </section>
       <p className="hint">以 GPL-3.0 协议开源。</p>
       <div className="actions">
         <button className="danger" onClick={() => invoke('quit')}>
