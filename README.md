@@ -43,7 +43,7 @@ APPLE_SIGNING_IDENTITY="<签名身份>" ./scripts/release-macos.sh
 | 更新包签名 | `TAURI_SIGNING_PRIVATE_KEY_PATH`（本机在 `~/.tauri/anytools-updater.key`） | 不生成更新包 |
 | 应用内更新 | `ANYTOOLS_UPDATE_URL`（latest.json 的 https 地址） | 该版本的应用内更新关闭 |
 
-GitHub 上推送 `v*` 标签会触发 [.github/workflows/release.yml](.github/workflows/release.yml)：构建 Universal 包、签名（有证书时公证），并把 DMG、更新包和 `latest.json` 发布到草稿 Release。需要的 Secrets 写在工作流文件开头。更新包的公钥在 `app/tauri.conf.json`，私钥**不在仓库里**，丢失后已发布的版本将无法再自动更新。
+GitHub 上推送 `v*` 标签会触发 [.github/workflows/release.yml](.github/workflows/release.yml)：构建 macOS Universal 包和 Windows x64 的 NSIS 安装包，签名（macOS 有证书时公证），并把 DMG、安装包、更新包和 `latest.json` 发布到草稿 Release。需要的 Secrets 写在工作流文件开头。Windows 安装包没有代码签名证书，SmartScreen 会拦截。更新包的公钥在 `app/tauri.conf.json`，私钥**不在仓库里**，丢失后已发布的版本将无法再自动更新。
 
 ## 测试
 

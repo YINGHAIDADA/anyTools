@@ -1,7 +1,9 @@
 name: Release
 
 # Push a tag like v0.2.0 (matching the version in Cargo.toml / tauri.conf.json) to build a draft
-# GitHub release with the signed macOS app, the DMG, and the updater manifest (latest.json).
+# GitHub release: the macOS app and DMG, the Windows NSIS installer, and latest.json.
+# The Windows job runs after macOS so it can add its platforms to the updater manifest
+# instead of replacing it.
 #
 # Repository secrets:
 #   TAURI_SIGNING_PRIVATE_KEY            updater key (~/.tauri/anytools-updater.key)   required
@@ -11,7 +13,8 @@ name: Release
 #   APPLE_SIGNING_IDENTITY               e.g. "Developer ID Application: Name (TEAMID)"
 #   APPLE_API_KEY / APPLE_API_ISSUER     App Store Connect API key id / issuer id       optional
 #   APPLE_API_KEY_P8                     contents of the AuthKey_XXXX.p8 file
-# Without the Apple secrets the app is ad-hoc signed and not notarized: users must right-click › Open.
+# Without the Apple secrets the Mac app is ad-hoc signed and not notarized.
+# There is no Windows code-signing certificate: SmartScreen warns on that installer.
 
 on:
   push:
@@ -108,6 +111,55 @@ jobs:
           projectPath: app
           tauriScript: ${{ runner.temp }}/tauri-release
           args: --target universal-apple-darwin --config tauri.release.conf.json
+          tagName: ${{ github.ref_name }}
+          releaseName: anyTools ${{ github.ref_name }}
+          releaseBody: See the commit history for changes.
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+
+  # After macOS, so its latest.json already lists the Mac builds when this job merges the Windows ones in.
+  windows:
+    needs: macos
+    runs-on: windows-latest
+    env:
+      ANYTOOLS_UPDATE_URL: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+        working-directory: ui
+
+      # tauri-action execs the first word of tauriScript directly and inserts `build` itself, and the CLI
+      # needs these env vars when it starts from app/ instead of through `npm run tauri` in ui/.
+      - name: Write the Tauri CLI wrapper
+        shell: bash
+        run: |
+          {
+            echo '#!/bin/sh'
+            echo "root='$GITHUB_WORKSPACE'"
+            echo 'export TAURI_APP_PATH="$root/app" TAURI_FRONTEND_PATH="$root/ui"'
+            echo 'exec node "$root/ui/node_modules/@tauri-apps/cli/tauri.js" "$@"'
+          } > "$RUNNER_TEMP/tauri-release"
+          chmod +x "$RUNNER_TEMP/tauri-release"
+
+      - name: Build and publish the installer
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app
+          tauriScript: ${{ runner.temp }}/tauri-release
+          # nsis only: the shared config builds the macOS bundles, which this runner can't.
+          args: --target x86_64-pc-windows-msvc --config tauri.windows.conf.json --bundles nsis
           tagName: ${{ github.ref_name }}
           releaseName: anyTools ${{ github.ref_name }}
           releaseBody: See the commit history for changes.
