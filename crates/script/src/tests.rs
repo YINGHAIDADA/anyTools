@@ -66,7 +66,8 @@ fn permissions_are_enforced() {
 #[test]
 fn fs_within_granted_dir() {
     let d = tempfile::tempdir().unwrap();
-    let dir = d.path().canonicalize().unwrap();
+    // `canonicalize` (and `temp_dir`) on Windows prepend `\\?\`, which breaks the string joins below.
+    let dir = perms::strip_verbatim(&d.path().canonicalize().unwrap());
     let p = Perms { fs: Some(vec![dir.clone()]), ..Default::default() };
     let js = format!(
         r#"

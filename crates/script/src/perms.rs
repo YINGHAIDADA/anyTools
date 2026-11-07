@@ -89,12 +89,14 @@ fn expand_tilde(p: &str) -> PathBuf {
 /// makes the result invalid, so comparisons use the plain form. The prefix is only ever added by the
 /// platform, never typed by a script, so dropping it doesn't widen what a script can reach.
 #[cfg(windows)]
-fn strip_verbatim(p: &Path) -> PathBuf {
-    p.to_string_lossy().trim_start_matches(r"\\?\").into()
+pub(crate) fn strip_verbatim(p: &Path) -> PathBuf {
+    // Both the prefix `canonicalize` adds and the one `std::env::temp_dir` already carries.
+    let s = p.to_string_lossy();
+    s.trim_start_matches(r"\\?\").trim_start_matches(r"\?\").into()
 }
 
 #[cfg(not(windows))]
-fn strip_verbatim(p: &Path) -> PathBuf {
+pub(crate) fn strip_verbatim(p: &Path) -> PathBuf {
     p.to_path_buf()
 }
 
@@ -221,7 +223,8 @@ mod tests {
         assert!(parse("// @permissions net").is_err());
         assert!(parse("// @permissions fs:relative/dir").is_err());
         assert!(parse("const x = 1").unwrap().is_empty());
-        assert_eq!(parse("// @permissions fs fs:/a").unwrap().fs, Some(vec![]), "fs (any) wins");
+        // `fs` (any path) wins over a listed directory, so the directory never has to be a real one.
+        assert_eq!(parse(&format!("// @permissions fs fs:{abs}")).unwrap().fs, Some(vec![]), "fs (any) wins");
     }
 
     #[test]
