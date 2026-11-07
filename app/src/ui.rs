@@ -24,9 +24,11 @@ impl TauriUi {
         let built = WebviewWindowBuilder::new(app, SETTINGS, WebviewUrl::App("settings.html".into()))
             .title("anyTools")
             .inner_size(880.0, 640.0)
-            .min_inner_size(720.0, 520.0)
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true)
+            .min_inner_size(720.0, 520.0);
+        // Overlay title bars are a macOS window style; other platforms keep the normal title bar.
+        #[cfg(target_os = "macos")]
+        let built = built.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
+        let built = built
             .transparent(true)
             // Native vibrancy behind the (transparent) sidebar; the content pane paints its own background.
             .effects(tauri::utils::config::WindowEffectsConfig {

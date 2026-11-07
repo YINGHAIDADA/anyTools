@@ -1,6 +1,8 @@
 //! Application host: builds the core, starts modules, owns the tray, permissions and IPC.
 
-use crate::ui::{notify_settings, TauriUi, OVERLAY, SETTINGS};
+use crate::ui::{notify_settings, TauriUi, SETTINGS};
+#[cfg(target_os = "macos")]
+use crate::ui::OVERLAY;
 use anytools_core::platform::{InputEvent, InputFilter, PermState, Permission};
 use anytools_core::{ConfigStore, CoreEvent, EventBus, Host, Module, Registry, Services};
 use serde_json::{json, Value};
@@ -235,7 +237,7 @@ fn list_apps() -> Vec<Value> {
             }
         }
     }
-    out.sort_by(|a, b| a["name"].as_str().unwrap_or("").to_lowercase().cmp(&b["name"].as_str().unwrap_or("").to_lowercase()));
+    out.sort_by(|a: &Value, b: &Value| a["name"].as_str().unwrap_or("").to_lowercase().cmp(&b["name"].as_str().unwrap_or("").to_lowercase()));
     out.dedup_by(|a, b| a["id"] == b["id"] && !a["id"].is_null());
     out
 }
