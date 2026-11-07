@@ -552,6 +552,8 @@ anyTools/
 
 ## 14. 里程碑
 
+macOS 上 M1–M5 已实现。Windows 的系统集成还没做。公证需要 Developer ID 证书，目前没有。
+
 **M0 技术验证（最关键，任何一项不通过都要重新评估方案）**
 
 | # | 验证项 | 通过标准 |
@@ -561,11 +563,9 @@ anyTools/
 | P3 | 选中文件探测 | Finder、资源管理器（含多标签页）、桌面三种场景 p95 ≤ 80ms |
 | P4 | 流动辉光性能 | 120Hz 屏幕上 CSS 版本不掉帧；否则改用 WebGL |
 
-> **进展（2026-11-07，macOS 第 1 轮，详见 [docs/M0-RESULTS.md](docs/M0-RESULTS.md)）**：钩子吞键、不抢焦点、Finder 读取（p95 51ms）、CSS 辉光（60Hz 掉帧 0.12%）通过；按键到画面第 1 轮中位数 68ms；第 2 轮关掉 WebView 的遮挡检测、并让默认轮盘提前画好后，**首帧估算 p95 23ms，页面更新画完 p95 43ms，通过**（依赖一个私有接口，失效时退回约 68ms）；毛玻璃效果待肉眼确认；向其他应用发按键、WebGL、120Hz 还没测；Windows 部分还没开始。
+macOS 的结果见 [docs/M0-RESULTS.md](docs/M0-RESULTS.md)：吞键、不抢焦点、Finder 读取和 60Hz 下的辉光通过；关掉 WebView 的遮挡检测并提前画好默认轮盘后，首帧估算 p95 23ms。向其他应用发按键、WebGL、120Hz 没测，Windows 没做。
 
-> **进展（2026-11-07）**：M1–M4 的 macOS 部分已实现，说明见 [README.md](README.md)。M4 的公证流程已就绪，但还没有 Developer ID 证书，尚未实际公证过；GitHub 仓库未建，CI 与应用内更新未实际运行过。暂未做：Windows 实现。
->
-> 与方案的差异：脚本权限声明按 §8 实现，但轮盘里本来就能做的事（发按键、剪贴板、启动应用、通知）不需要声明；`http.fetch` 是同步实现，返回普通对象而不是 Response。
+与方案的差异：发按键、剪贴板、启动应用、通知不需要权限声明；`http.fetch` 是同步的，返回普通对象。
 
 **M1 核心框架**：Module / Registry / EventBus / ConfigStore（热加载）/ Resolver / 平台 trait 与 mock 实现、托盘或菜单栏图标、权限引导页。
 
@@ -575,11 +575,9 @@ anyTools/
 
 **M4 分发**：签名、公证、自动更新、CI 发布流程、开机自启、崩溃日志。
 
-**M5 扩展性验证**：实现第二个模块（建议做剪贴板历史，正好可以复用 Trigger、浮层和 Action），检验架构是否真的方便扩展。
+**M5 扩展性验证**：第二个模块是剪贴板历史（`crates/modules/clipboard`）。只记文字，存在 `state/clipboard.json`（权限 600），跳过标记为敏感或临时的内容、忽略列表里的应用，以及 anyTools 自己借用剪贴板造成的变化。⌃⌘V 打开列表面板，`clipboard.recent` 可以放进任何轮盘。
 
-> **进展（2026-11-07）**：M5 的 macOS 部分已实现：剪贴板历史作为第二个模块（`crates/modules/clipboard`），只记文字并存盘（`state/clipboard.json`，权限 600），跳过密码管理器等标记为敏感或临时的内容、忽略列表里的应用、以及 anyTools 自己借用剪贴板（读取选中文字、粘贴模式输入）造成的变化。两种用法：⌃⌘V 唤起的玻璃列表面板（输入即搜索，↑↓/回车/⌘1–9/点击粘贴，⌘⌫ 删除），以及可放进任何轮盘的 `clipboard.recent`（划出展开最近几条）。
->
-> 为此对核心做的扩展：Action 可以是「菜单」（`is_menu` / `menu`，选项在打开时计算，轮盘显示为动态子轮盘）；`InputEvent` 增加按键对应的字符与滚轮事件（浮层窗口不获得焦点，输入全部经全局钩子）；模块有会话时独占按下类事件（`Module::exclusive`），避免另一个模块叠在上面打开；浮层形状支持圆角矩形（Liquid Glass 用圆角矩形而非圆盘）。同时补上了遗留项：规则支持 `selection: text`（先用辅助功能读取，读不到再模拟 ⌘C 并原样恢复剪贴板），动作 `open` 支持 `{text}`。
+为此加到核心的：动作可以是菜单（`is_menu` / `menu`），打开时才算出选项；`InputEvent` 带上按键字符和滚轮；模块有会话时独占按下类事件（`Module::exclusive`）；浮层形状支持圆角矩形。规则支持 `selection: text`，`open` 支持 `{text}`。
 
 ---
 
