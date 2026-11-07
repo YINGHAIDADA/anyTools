@@ -85,6 +85,19 @@ fn expand_tilde(p: &str) -> PathBuf {
     }
 }
 
+/// `canonicalize` on Windows returns `\\?\C:\...`. Scripts join paths as strings, where that prefix
+/// makes the result invalid, so comparisons use the plain form. The prefix is only ever added by the
+/// platform, never typed by a script, so dropping it doesn't widen what a script can reach.
+#[cfg(windows)]
+fn strip_verbatim(p: &Path) -> PathBuf {
+    p.to_string_lossy().trim_start_matches(r"\\?\").into()
+}
+
+#[cfg(not(windows))]
+fn strip_verbatim(p: &Path) -> PathBuf {
+    p.to_path_buf()
+}
+
 /// Lexical normalization (`a/./b/../c` → `a/c`), plus symlink resolution of the longest existing prefix,
 /// so `fs:~/Docs` can't be escaped with `..` or a symlink.
 pub fn normalize(p: &Path) -> PathBuf {
@@ -108,7 +121,7 @@ pub fn normalize(p: &Path) -> PathBuf {
         }
         existing.pop();
     }
-    let mut base = existing.canonicalize().unwrap_or(existing);
+    let mut base = existing.canonicalize().map(|p| strip_verbatim(&p)).unwrap_or(existing);
     for n in rest.into_iter().rev() {
         base.push(n);
     }
@@ -200,8 +213,9 @@ mod tests {
 
     #[test]
     fn parses_header() {
-        let p = parse("#!/usr/bin/env anytools\n// 日报\n// @permissions fs:/tmp/x shell\n// @permissions http:API.example.com\nlet a = 1;\n// @permissions http\n").unwrap();
-        assert_eq!(p.fs, Some(vec![PathBuf::from("/tmp/x")]));
+        let abs = if cfg!(windows) { "C:/tmp/x" } else { "/tmp/x" };
+        let p = parse(&format!("#!/usr/bin/env anytools\n// 日报\n// @permissions fs:{abs} shell\n// @permissions http:API.example.com\nlet a = 1;\n// @permissions http\n")).unwrap();
+        assert_eq!(p.fs, Some(vec![PathBuf::from(abs)]));
         assert!(p.shell);
         assert_eq!(p.http, Some(vec!["api.example.com".to_string()]), "stops at the first non-comment line");
         assert!(parse("// @permissions net").is_err());

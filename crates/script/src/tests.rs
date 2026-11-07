@@ -35,7 +35,8 @@ fn api_basics() {
         Perms::default(),
     );
     let out = r.unwrap();
-    assert_eq!(out.logs, ["app com.apple.finder 1 mac".replace("mac", if cfg!(target_os = "macos") { "mac" } else { "other" })]);
+    let platform = if cfg!(target_os = "macos") { "mac" } else if cfg!(target_os = "windows") { "win" } else { "other" };
+    assert_eq!(out.logs, [format!("app com.apple.finder 1 {platform}")]);
     assert_eq!(out.result.as_deref(), Some(r#"{"n":1}"#));
     let calls = mock.calls();
     assert!(matches!(&calls[0], Call::Chord(c) if c.key == "p"));
@@ -46,9 +47,12 @@ fn api_basics() {
 
 #[test]
 fn permissions_are_enforced() {
-    let (r, _) = go("fs.read('/etc/hosts')", Perms::default());
+    // A path that is absolute on every platform, so the check reaches the permission and not the syntax.
+    let abs = std::env::temp_dir().join("hosts");
+    let abs = abs.to_string_lossy().replace('\\', "\\\\");
+    let (r, _) = go(&format!("fs.read({abs:?})"), Perms::default());
     let e = r.unwrap_err();
-    assert!(e.contains("没有权限") && e.contains("@permissions fs:/etc"), "{e}");
+    assert!(e.contains("没有权限") && e.contains("@permissions fs:"), "{e}");
     let (r, _) = go("shell.exec('echo hi')", Perms::default());
     assert!(r.unwrap_err().contains("@permissions shell"));
     let (r, _) = go("http.fetch('https://example.com/x')", Perms::default());
@@ -157,7 +161,8 @@ fn script_paths_are_confined() {
     let d = tempfile::tempdir().unwrap();
     let (h, _) = host(d.path(), true);
     assert!(h.resolve("../x.js").is_err());
-    assert!(h.resolve("/etc/x.js").is_err());
+    let outside = std::env::temp_dir().join("x.js");
+    assert!(h.resolve(&outside.to_string_lossy()).is_err(), "absolute paths stay outside scripts/");
     assert!(h.resolve("x.py").is_err());
     assert!(h.resolve("sub/x.ts").is_ok());
 }
