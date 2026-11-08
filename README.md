@@ -6,10 +6,10 @@ macOS 13 及以上可用。Windows 的安装包会随版本一起构建，系统
 
 ## 下载
 
-当前版本是 [v0.1.0](https://github.com/YINGHAIDADA/anyTools/releases/tag/v0.1.0)。
+当前版本是 [v0.1.1](https://github.com/YINGHAIDADA/anyTools/releases/tag/v0.1.1)。
 
-- macOS：[anyTools_0.1.0_universal.dmg](https://github.com/YINGHAIDADA/anyTools/releases/download/v0.1.0/anyTools_0.1.0_universal.dmg)（Apple Silicon 和 Intel）
-- Windows：[anyTools_0.1.0_x64-setup.exe](https://github.com/YINGHAIDADA/anyTools/releases/download/v0.1.0/anyTools_0.1.0_x64-setup.exe)（x64，功能未完成）
+- macOS：[anyTools_0.1.1_universal.dmg](https://github.com/YINGHAIDADA/anyTools/releases/download/v0.1.1/anyTools_0.1.1_universal.dmg)（Apple Silicon 和 Intel）
+- Windows：[anyTools_0.1.1_x64-setup.exe](https://github.com/YINGHAIDADA/anyTools/releases/download/v0.1.1/anyTools_0.1.1_x64-setup.exe)（x64，功能未完成）
 
 这两个包都没有用对外分发的证书签名。macOS 上第一次打开，到「系统设置 › 隐私与安全性」里点「仍要打开」。Windows 上 SmartScreen 会拦截。装好后授予辅助功能权限；签名一变，要重新授权。
 
