@@ -41,6 +41,10 @@ impl TauriUi {
             .build();
         match built {
             Ok(w) => {
+                #[cfg(target_os = "macos")]
+                if let Ok(ptr) = w.ns_window() {
+                    anytools_platform::macos::overlay::prepare_settings_window(ptr);
+                }
                 let _ = w.set_focus();
             }
             Err(e) => tracing::error!(error = %e, "failed to open settings window"),

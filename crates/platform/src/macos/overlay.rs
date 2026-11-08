@@ -9,13 +9,13 @@ use super::context::set_screens;
 use anytools_core::context::{Frame, Rect, ScreenInfo};
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, Bool};
-use objc2::{msg_send, sel, MainThreadMarker};
+use objc2::runtime::{AnyObject, Bool, NSObjectProtocol};
+use objc2::{define_class, extern_methods, msg_send, sel, ClassType, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAnimatablePropertyContainer, NSAnimationContext, NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua,
-    NSAutoresizingMaskOptions, NSBezierPath, NSColor, NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSPopUpMenuWindowLevel,
-    NSScreen, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
-    NSWindowCollectionBehavior, NSWindowOrderingMode,
+    NSAutoresizingMaskOptions, NSBezierPath, NSButton, NSColor, NSEvent, NSGlassEffectView, NSGlassEffectViewStyle, NSImage,
+    NSPopUpMenuWindowLevel, NSScreen, NSTitlebarSeparatorStyle, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
+    NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowCollectionBehavior, NSWindowOrderingMode,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use serde::Deserialize;
@@ -59,8 +59,122 @@ struct Overlay {
     primary_h: f64,
 }
 
-/// Whether this macOS has Liquid Glass (`NSGlassEffectView`, macOS 26+). Checked at runtime: calling the
-/// typed binding on an older system would abort on the missing class.
+// Sits above the transparent title bar and turns a click there into a window drag. `mouseDownCanMoveWindow`
+// would do the same, but it also swallows the double-click that zooms the window, which this keeps.
+//
+// SAFETY: `NSView` has no subclassing requirements, and this type does not implement `Drop`.
+define_class!(
+    #[unsafe(super(NSView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "AnytoolsTitlebarDragStrip"]
+    struct TitlebarDragStrip;
+
+    impl TitlebarDragStrip {
+        // The strip only exists to catch clicks, so a click on a traffic-light button falls through to it.
+        // Returned unretained, exactly as `NSView` returns `self`: the caller does not own the result.
+        #[unsafe(method(hitTest:))]
+        fn hit_test(this: *const Self, point: NSPoint) -> *mut NSView {
+            let Some(view) = (unsafe { this.as_ref() }) else { return std::ptr::null_mut() };
+            let local = view.convertPoint_fromView(point, None);
+            let mine = NSRect::new(NSPoint::ZERO, view.bounds().size);
+            if !rect_contains(mine, local) {
+                return std::ptr::null_mut();
+            }
+            let Some(window) = view.window() else { return this.cast_mut().cast() };
+            for button in traffic_lights(&window) {
+                let rect = button.convertRect_toView(button.bounds(), Some(view));
+                // A little padding: the buttons' tracking area is wider than the glyph they draw.
+                if rect_contains(inset(rect, -4.0), local) {
+                    return std::ptr::null_mut();
+                }
+            }
+            this.cast_mut().cast()
+        }
+
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, event: &NSEvent) {
+            let Some(window) = self.window() else { return };
+            // A double-click on the title bar zooms, matching the system default.
+            if event.clickCount() == 2 && title_bar_double_click_zooms() {
+                window.zoom(None);
+                return;
+            }
+            window.performWindowDragWithEvent(event);
+        }
+    }
+);
+
+impl TitlebarDragStrip {
+    extern_methods!(
+        #[unsafe(method(initWithFrame:))]
+        fn init_with_frame(this: objc2::rc::Allocated<Self>, frame: NSRect) -> Retained<Self>;
+    );
+
+    /// Cover whatever of the theme frame sticks out above the content view, i.e. the title bar.
+    fn layout_over_titlebar(&self) {
+        // SAFETY: the strip is in the window, so it has a superview for its whole lifetime.
+        let Some(theme) = (unsafe { self.superview() }) else { return };
+        let frame = theme.bounds();
+        let title_h = self.window().map(|w| w.frame().size.height - w.contentLayoutRect().size.height).unwrap_or(0.0);
+        let h = if title_h > 1.0 { title_h } else { 28.0 };
+        self.setFrame(NSRect::new(NSPoint::new(0.0, frame.size.height - h), NSSize::new(frame.size.width, h)));
+    }
+}
+
+fn traffic_lights(window: &NSWindow) -> Vec<Retained<NSButton>> {
+    use objc2_app_kit::NSWindowButton;
+    [NSWindowButton::CloseButton, NSWindowButton::MiniaturizeButton, NSWindowButton::ZoomButton]
+        .into_iter()
+        .filter_map(|b| window.standardWindowButton(b))
+        .collect()
+}
+
+fn rect_contains(rect: NSRect, point: NSPoint) -> bool {
+    point.x >= rect.origin.x
+        && point.y >= rect.origin.y
+        && point.x < rect.origin.x + rect.size.width
+        && point.y < rect.origin.y + rect.size.height
+}
+
+fn inset(rect: NSRect, by: f64) -> NSRect {
+    NSRect::new(
+        NSPoint::new(rect.origin.x - by, rect.origin.y - by),
+        NSSize::new(rect.size.width + 2.0 * by, rect.size.height + 2.0 * by),
+    )
+}
+
+/// The system setting for what a title-bar double-click does. `None` means it does nothing.
+fn title_bar_double_click_zooms() -> bool {
+    let key = NSString::from_str("AppleActionOnDoubleClick");
+    objc2_foundation::NSUserDefaults::standardUserDefaults()
+        .stringForKey(&key)
+        .is_none_or(|v| v.to_string() != "Minimize")
+}
+
+/// The settings page fills the transparent title bar, and AppKit draws that title bar in its own view
+/// layered above the page, so the page's drag regions never see the click. A transparent strip is laid
+/// over that area instead: a click there starts a window drag, while the traffic-light buttons stay
+/// clickable because the strip gives way wherever one of them is. Nothing in the existing view hierarchy
+/// is moved, so the window's layout is left alone.
+pub fn prepare_settings_window(ns_window: *mut c_void) {
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let Some(window) = (unsafe { Retained::retain(ns_window as *mut NSWindow) }) else { return };
+    window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
+    let Some(theme) = window.contentView().and_then(|content| unsafe { content.superview() }) else { return };
+
+    // Reopening the window (it is kept and re-shown) must not stack a second strip on top.
+    let already = theme.subviews().iter().any(|v| v.isKindOfClass(TitlebarDragStrip::class()));
+    if !already {
+        let strip = TitlebarDragStrip::init_with_frame(mtm.alloc(), NSRect::ZERO);
+        // Pinned to the top edge (AppKit is y-up) and as wide as the window.
+        strip.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewMinYMargin,
+        );
+        theme.addSubview(&strip);
+        strip.layout_over_titlebar();
+    }
+}
+
 pub fn liquid_glass_available() -> bool {
     objc2::runtime::AnyClass::get(c"NSGlassEffectView").is_some()
 }
