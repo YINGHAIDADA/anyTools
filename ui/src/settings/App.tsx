@@ -288,15 +288,17 @@ const ACCENTS = [
   { value: '#bf5af2', label: '紫', css: '#bf5af2' },
 ];
 
+// Named by how they look, not by the AppKit material they map to. `liquid` (regular) is the more
+// transparent of the two; `liquid-clear` frosts the background harder, so it reads as milkier.
 const MATERIALS = [
-  { value: 'liquid', label: '液态玻璃（默认）' },
-  { value: 'liquid-clear', label: '液态玻璃 · 通透' },
-  { value: 'hud', label: 'HUD' },
-  { value: 'popover', label: '弹出层' },
-  { value: 'menu', label: '菜单' },
-  { value: 'sidebar', label: '侧边栏' },
-  { value: 'fullscreen-ui', label: '全屏界面' },
-  { value: 'under-window', label: '窗口下层' },
+  { value: 'liquid', label: '液态玻璃 · 清透' },
+  { value: 'liquid-clear', label: '液态玻璃 · 磨砂' },
+  { value: 'hud', label: 'HUD · 深色半透明' },
+  { value: 'popover', label: '浅色模糊' },
+  { value: 'menu', label: '菜单同款' },
+  { value: 'sidebar', label: '更透的模糊' },
+  { value: 'fullscreen-ui', label: '压暗的模糊' },
+  { value: 'under-window', label: '最淡的模糊' },
 ];
 
 function Appearance({ draft, mac, liquid }: { draft: Draft; mac: boolean; liquid: boolean }) {
@@ -336,7 +338,7 @@ function Appearance({ draft, mac, liquid }: { draft: Draft; mac: boolean; liquid
               {MATERIALS.map((m) => (
                 <option key={m.value} value={m.value}>
                   {m.label}
-                  {m.value.startsWith('liquid') && !liquid ? '（需要 macOS 26，当前用 HUD）' : ''}
+                  {m.value.startsWith('liquid') && !liquid ? '（需要 macOS 26，当前用深色半透明）' : ''}
                 </option>
               ))}
             </select>
