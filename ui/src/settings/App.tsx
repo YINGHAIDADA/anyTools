@@ -64,7 +64,8 @@ export function App() {
     };
   }, [refresh, loadIcons]);
 
-  const needsSetup = status !== null && (!status.hook || status.permissions.accessibility !== 'granted');
+  // `not_needed` is what Windows reports: the hook needs no permission there, so it isn't a setup gap.
+  const needsSetup = status !== null && (!status.hook || (status.permissions.accessibility !== 'granted' && status.permissions.accessibility !== 'not_needed'));
   const platform: Platform = status?.platform === 'win' ? 'win' : 'mac';
   const wheelCfg = draft.cfg?.modules.wheel;
   const setWheel = (f: (c: WheelModuleCfg) => void) => draft.edit((c) => c.modules.wheel && f(c.modules.wheel));

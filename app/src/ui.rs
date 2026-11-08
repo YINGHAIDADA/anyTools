@@ -132,7 +132,32 @@ impl Ui for TauriUi {
                 }
             }
         }
-        #[cfg(not(target_os = "macos"))]
+        // Windows has no glass mask, so the window itself is cut to the wheel's outline. The page still
+        // gets the same events; only the native window handling differs.
+        #[cfg(windows)]
+        {
+            use anytools_platform::windows::overlay;
+            let app = self.app.clone();
+            match cmd {
+                OverlayCmd::Show { session, frame, shape, channel, payload } => {
+                    let _ = self.app.run_on_main_thread(move || {
+                        if !payload.is_null() {
+                            let _ = app.emit_to(OVERLAY, channel, payload);
+                        }
+                        overlay::show(session, frame, Some(shape));
+                    });
+                }
+                OverlayCmd::Shape { session, shape } => {
+                    let _ = self.app.run_on_main_thread(move || overlay::set_shape(session, shape));
+                }
+                OverlayCmd::Hide { session, fade_ms } => {
+                    let _ = self.app.run_on_main_thread(move || {
+                        overlay::hide(session, fade_ms);
+                    });
+                }
+            }
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
         {
             let _ = cmd;
         }

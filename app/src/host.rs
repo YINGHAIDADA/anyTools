@@ -1,7 +1,7 @@
 //! Application host: builds the core, starts modules, owns the tray, permissions and IPC.
 
 use crate::ui::{notify_settings, TauriUi, SETTINGS};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 use crate::ui::OVERLAY;
 use anytools_core::platform::{InputEvent, InputFilter, PermState, Permission};
 use anytools_core::{ConfigStore, CoreEvent, EventBus, Host, Module, Registry, Services};
@@ -67,13 +67,16 @@ impl App {
         &self.host.services
     }
 
-    /// Starts the input hook once Accessibility is granted. Safe to call repeatedly.
+    /// Starts the input hook once it is allowed to run. On macOS that means Accessibility is granted;
+    /// elsewhere the hook needs no permission. Safe to call repeatedly.
     fn try_start_hook(&self) -> Result<(), String> {
         let s = self.services();
         if s.input.running() {
             return Ok(());
         }
-        if s.perms.status(Permission::Accessibility) != PermState::Granted {
+        // `NotNeeded` is a platform without the permission (Windows), which must still start the hook.
+        let access = s.perms.status(Permission::Accessibility);
+        if access != PermState::Granted && access != PermState::NotNeeded {
             return Err("尚未授予辅助功能权限".into());
         }
         s.input.start(Arc::new(ModuleFilter(self.modules.clone())))?;
@@ -641,6 +644,26 @@ fn setup(app_handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         })?;
     }
 
+    // Windows: the overlay is a borderless, non-activating, click-through window with an acrylic
+    // backdrop. Its outline is cut to the wheel when one opens.
+    #[cfg(windows)]
+    {
+        let overlay = app_handle.get_webview_window(OVERLAY).ok_or("overlay window missing")?;
+        let hwnd = overlay.hwnd().map(|h| h.0 as isize).unwrap_or(0);
+        let _ = overlay.set_ignore_cursor_events(true);
+        anytools_platform::windows::overlay::setup(hwnd);
+        // Acrylic blurs whatever is behind the window. It needs Windows 10 1809 or newer; where it isn't
+        // available the wheel still shows, just over the page's own translucent background.
+        let _ = overlay.set_effects(tauri::utils::config::WindowEffectsConfig {
+            effects: vec![tauri::window::Effect::Acrylic],
+            state: None,
+            radius: None,
+            color: Some(tauri::utils::config::Color(32, 32, 36, 200)),
+            interactive: false,
+        });
+        tracing::info!("overlay ready");
+    }
+
     config.watch()?;
     build_tray(app_handle)?;
 
@@ -684,10 +707,13 @@ fn setup(app_handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     anytools_platform::macos::overlay::refresh_screens(mtm);
                 }
             });
+            // Screen layout is read from anywhere, so it doesn't have to be refreshed on the UI thread.
+            #[cfg(windows)]
+            anytools_platform::windows::refresh_screens();
             refresh_tray();
         }
     })?;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     let _ = handle;
 
     a.started.store(true, Ordering::Relaxed);

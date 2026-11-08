@@ -122,6 +122,7 @@ version = "0.1.1"
 dependencies = [
  "anytools-core",
  "block2",
+ "image",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
@@ -129,6 +130,7 @@ dependencies = [
  "serde_json",
  "tracing",
  "trash",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
