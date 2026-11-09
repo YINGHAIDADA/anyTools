@@ -144,11 +144,16 @@ pub fn reveal_logs() -> Result<(), String> {
 // Updates (tauri-plugin-updater; artifacts are minisign-signed, the public key is in tauri.conf.json)
 // ------------------------------------------------------------------------------------------------
 
-/// The update manifest URL is baked in at build time (CI sets it from the GitHub repository), so
-/// local builds simply have updates turned off.
+/// The update manifest. Comes from the `plugins.updater.endpoints` entry in `tauri.conf.json`, so
+/// every build (CI or local) can check for updates. A build opts out by overriding it with
+/// `ANYTOOLS_UPDATE_URL` set to anything that isn't an https URL.
 pub fn update_endpoint() -> Option<&'static str> {
-    option_env!("ANYTOOLS_UPDATE_URL").filter(|u| u.starts_with("https://"))
+    let url = option_env!("ANYTOOLS_UPDATE_URL").unwrap_or(UPDATE_ENDPOINT);
+    url.starts_with("https://").then_some(url)
 }
+
+/// Kept in step with `plugins.updater.endpoints` in `tauri.conf.json`.
+const UPDATE_ENDPOINT: &str = "https://github.com/YINGHAIDADA/anyTools/releases/latest/download/latest.json";
 
 fn updater(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Updater>, String> {
     use tauri_plugin_updater::UpdaterExt;

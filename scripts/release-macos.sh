@@ -9,7 +9,8 @@
 #     APPLE_ID + APPLE_PASSWORD (app-specific) + APPLE_TEAM_ID
 #   Updater artifacts (optional):
 #     TAURI_SIGNING_PRIVATE_KEY (or _PATH) [+ TAURI_SIGNING_PRIVATE_KEY_PASSWORD]
-#     ANYTOOLS_UPDATE_URL         https URL of latest.json baked into the app
+#     ANYTOOLS_UPDATE_URL         overrides the endpoint in tauri.conf.json; anything
+#                                 that isn't an https URL turns in-app updates off
 #   TARGET                        e.g. universal-apple-darwin (default: host architecture)
 #
 # Without notarization credentials the script still builds and signs, then says what is missing.
@@ -50,7 +51,7 @@ if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" ]];
 else
   warn "no TAURI_SIGNING_PRIVATE_KEY: building without updater artifacts"
 fi
-[[ -n "${ANYTOOLS_UPDATE_URL:-}" ]] && say "update URL: $ANYTOOLS_UPDATE_URL" || warn "ANYTOOLS_UPDATE_URL not set: in-app updates disabled in this build"
+[[ -n "${ANYTOOLS_UPDATE_URL:-}" ]] && say "update URL override: $ANYTOOLS_UPDATE_URL"
 
 target_args=()
 [[ -n "${TARGET:-}" ]] && target_args+=(--target "$TARGET")

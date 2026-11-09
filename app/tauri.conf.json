@@ -54,7 +54,10 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI1OThFMkI5MkY1NDE0NzUKUldSMUZGUXZ1ZUtZSmZaOHE1cWVibUQ2M2dlNnA2MVlMM0ZVTE91YkNFbTU0b3NtUlkwQUxtRTgK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI1OThFMkI5MkY1NDE0NzUKUldSMUZGUXZ1ZUtZSmZaOHE1cWVibUQ2M2dlNnA2MVlMM0ZVTE91YkNFbTU0b3NtUlkwQUxtRTgK",
+      "endpoints": [
+        "https://github.com/YINGHAIDADA/anyTools/releases/latest/download/latest.json"
+      ]
     }
   }
 }
