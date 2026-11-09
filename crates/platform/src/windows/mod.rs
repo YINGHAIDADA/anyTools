@@ -6,7 +6,7 @@
 
 mod context;
 mod input;
-mod overlay;
+pub mod overlay;
 mod system;
 mod util;
 
