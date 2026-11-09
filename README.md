@@ -2,14 +2,14 @@
 
 常驻菜单栏的日常工具。按住 ⌥Space，以鼠标为中心弹出轮盘，移到一格上松开就执行。选中了文件、选中了文字，或者前台是访达、浏览器、编辑器时，弹出的轮盘不同。设计见 [TECH_DESIGN.md](TECH_DESIGN.md)。
 
-macOS 13 及以上可用。Windows 的安装包会随版本一起构建，系统集成还没做，现在不能当日常工具用。
+macOS 13 及以上、Windows 10 及以上可用。Windows 上唤起键、轮盘和剪贴板历史可用；资源管理器的选中项和开机自启还没做。
 
 ## 下载
 
-当前版本是 [v0.1.1](https://github.com/YINGHAIDADA/anyTools/releases/tag/v0.1.1)。
+当前版本是 [v0.1.2](https://github.com/YINGHAIDADA/anyTools/releases/tag/v0.1.2)。
 
-- macOS：[anyTools_0.1.1_universal.dmg](https://github.com/YINGHAIDADA/anyTools/releases/download/v0.1.1/anyTools_0.1.1_universal.dmg)（Apple Silicon 和 Intel）
-- Windows：[anyTools_0.1.1_x64-setup.exe](https://github.com/YINGHAIDADA/anyTools/releases/download/v0.1.1/anyTools_0.1.1_x64-setup.exe)（x64，功能未完成）
+- macOS：[anyTools_0.1.2_universal.dmg](https://github.com/YINGHAIDADA/anyTools/releases/download/v0.1.2/anyTools_0.1.2_universal.dmg)（Apple Silicon 和 Intel）
+- Windows：[anyTools_0.1.2_x64-setup.exe](https://github.com/YINGHAIDADA/anyTools/releases/download/v0.1.2/anyTools_0.1.2_x64-setup.exe)（x64）
 
 这两个包都没有用对外分发的证书签名。macOS 上第一次打开，到「系统设置 › 隐私与安全性」里点「仍要打开」。Windows 上 SmartScreen 会拦截。装好后授予辅助功能权限；签名一变，要重新授权。
 
