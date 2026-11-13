@@ -1,5 +1,9 @@
 # anyTools
 
+<p align="center">
+  <img src="app/icons/128x128@2x.png" width="128" alt="anyTools 图标">
+</p>
+
 常驻菜单栏的日常工具。按住 ⌥Space，以鼠标为中心弹出轮盘，移到一格上松开就执行。选中了文件、选中了文字，或者前台是访达、浏览器、编辑器时，弹出的轮盘不同。设计见 [TECH_DESIGN.md](TECH_DESIGN.md)。
 
 macOS 13 及以上、Windows 10 及以上可用。Windows 上唤起键、轮盘和剪贴板历史可用；资源管理器的选中项和开机自启还没做。
